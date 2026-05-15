@@ -2,8 +2,8 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
-const { connectToDatabase, searchProducts } = require('./db.js');
-const { getUser, createUser, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote } = require('./localDb.js');
+const { connectToDatabase, searchProducts, createSqlClient } = require('./db.js');
+const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
 
 const botState = {
@@ -131,6 +131,12 @@ Para comenzar, ¿me podrías decir tu nombre?`;
                         caption: `¡Listo, ${user.name}! Aquí tienes tu cotización en PDF.\n\n¡Gracias por cotizar con nosotros!`
                     });
 
+                    // Registrar cliente en la base de datos SQL y guardar el código en SQLite
+                    const clientCode = await createSqlClient(user.name);
+                    if (clientCode) {
+                        await updateUserCode(phone, clientCode);
+                    }
+
                 } catch (err) {
                     console.error('Error generando PDF:', err);
                     await sock.sendMessage(from, { text: 'Hubo un error al generar el PDF. Por favor intenta de nuevo.' });
@@ -163,7 +169,7 @@ Para comenzar, ¿me podrías decir tu nombre?`;
 ✉️ ventas@lopezimpresores.mx
 
 👉 Escribe el nombre o clave de un artículo para buscarlo en nuestro inventario.
-_(Ejemplo: "tarjetas", "volantes", "lona")_`;
+_(Ejemplo: "libreta", "lapiz", "cartulina")_`;
 
                 if (fs.existsSync(path.join(__dirname, 'logo.png'))) {
                     await sock.sendMessage(from, { image: { url: path.join(__dirname, 'logo.png') }, caption: returnWelcomeText }, { quoted: msg });

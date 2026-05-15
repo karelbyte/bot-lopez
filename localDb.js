@@ -17,6 +17,7 @@ async function getLocalDb() {
                 CREATE TABLE IF NOT EXISTS clients (
                     phone TEXT PRIMARY KEY,
                     name TEXT,
+                    cliente_id TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -39,6 +40,7 @@ async function getLocalDb() {
                     FOREIGN KEY (quote_id) REFERENCES quotes(id) ON DELETE CASCADE
                 );
             `);
+
             return db;
         });
     }
@@ -56,6 +58,11 @@ async function getUser(phone) {
 async function createUser(phone, name) {
     const db = await getLocalDb();
     await db.run('INSERT OR REPLACE INTO clients (phone, name) VALUES (?, ?)', [phone, name]);
+}
+
+async function updateUserCode(phone, code) {
+    const db = await getLocalDb();
+    await db.run('UPDATE clients SET cliente_id = ? WHERE phone = ?', [code, phone]);
 }
 
 // ========================
@@ -111,6 +118,7 @@ module.exports = {
     getLocalDb,
     getUser,
     createUser,
+    updateUserCode,
     addItemToQuote,
     getPendingQuote,
     clearPendingQuote,

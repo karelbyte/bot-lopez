@@ -66,9 +66,55 @@ async function searchProducts(searchTerm) {
     }
 }
 
+async function createSqlClient(nombre) {
+    try {
+        const pool = await connectToDatabase();
+        const rfc = 'XAXX010101000';
+        const cp = '40890';
+        
+        // Verificamos si el cliente ya existe para evitar duplicados
+        const check = await pool.request()
+            .input('nombre', sql.VarChar, nombre)
+            .query(`SELECT [cliente], [NOMBRE] FROM clients WHERE [NOMBRE] = @nombre`);
+            
+        if (check.recordset.length > 0) {
+            return check.recordset[0].cliente;
+        }
+
+        // Obtener el código de cliente más grande y sumarle 1
+        const maxCodeResult = await pool.request().query(`
+            SELECT MAX(TRY_CAST([cliente] AS INT)) as MaxCodigo FROM clients
+        `);
+        
+        let nextCode = 1;
+        if (maxCodeResult.recordset.length > 0 && maxCodeResult.recordset[0].MaxCodigo !== null) {
+            nextCode = maxCodeResult.recordset[0].MaxCodigo + 1;
+        }
+
+        // Formatear el código a 6 dígitos (modificado por el usuario)
+        const clienteCodigo = String(nextCode).padStart(6, '0');
+
+        await pool.request()
+            .input('cliente', sql.VarChar, clienteCodigo)
+            .input('nombre', sql.VarChar, nombre)
+            .input('rfc', sql.VarChar, rfc)
+            .input('cp', sql.VarChar, cp)
+            .query(`
+                INSERT INTO clients ([cliente], [NOMBRE], [RFC], [CP], [PAIS])
+                VALUES (@cliente, @nombre, @rfc, @cp, 'MÉXICO')
+            `);
+        console.log(`✅ Cliente ${nombre} agregado a la tabla clients de SQL con código ${clienteCodigo}.`);
+        return clienteCodigo;
+    } catch (err) {
+        console.error('Error al crear cliente en SQL:', err);
+        return null;
+    }
+}
+
 module.exports = {
     sql,
     connectToDatabase,
     query,
-    searchProducts
+    searchProducts,
+    createSqlClient
 };
