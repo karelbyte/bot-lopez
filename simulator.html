@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador | Lopez Impresores</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #e5ddd5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .phone-frame {
+            width: 390px;
+            height: 780px;
+            background: #fff;
+            border-radius: 40px;
+            box-shadow: 0 30px 80px rgba(0,0,0,0.25);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 8px solid #1a1a1a;
+        }
+        .wa-header {
+            background: #075e54;
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .wa-header .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #25d366;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+        .wa-header .avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .wa-header .info .name { font-weight: 600; font-size: 15px; }
+        .wa-header .info .sub { font-size: 12px; opacity: 0.8; }
+        .wa-header .back { font-size: 20px; cursor: pointer; margin-right: 4px; }
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 10px;
+            background: #e5ddd5;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .messages::-webkit-scrollbar { width: 4px; }
+        .messages::-webkit-scrollbar-thumb { background: #bbb; border-radius: 4px; }
+        .bubble-wrap {
+            display: flex;
+            flex-direction: column;
+            max-width: 80%;
+        }
+        .bubble-wrap.bot { align-self: flex-start; }
+        .bubble-wrap.user { align-self: flex-end; }
+        .bubble {
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13.5px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .bubble-wrap.bot .bubble {
+            background: #fff;
+            border-top-left-radius: 2px;
+            color: #111;
+        }
+        .bubble-wrap.user .bubble {
+            background: #dcf8c6;
+            border-top-right-radius: 2px;
+            color: #111;
+        }
+        .bubble .time {
+            font-size: 10px;
+            color: #999;
+            text-align: right;
+            margin-top: 4px;
+        }
+        .bubble img.logo-bubble {
+            width: 100%;
+            max-width: 220px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .bubble b { font-weight: 600; }
+        .pdf-link {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f0f0f0;
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            text-decoration: none;
+            color: #075e54;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .pdf-link:hover { background: #e0e0e0; }
+        .pdf-icon { font-size: 22px; }
+        .typing {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 10px 14px;
+            background: #fff;
+            border-radius: 8px;
+            border-top-left-radius: 2px;
+            width: fit-content;
+            align-self: flex-start;
+        }
+        .typing span {
+            width: 7px; height: 7px;
+            background: #aaa;
+            border-radius: 50%;
+            animation: bounce 1.2s infinite;
+        }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-6px); }
+        }
+        .input-area {
+            background: #f0f0f0;
+            padding: 8px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .input-area input {
+            flex: 1;
+            border: none;
+            border-radius: 20px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            background: #fff;
+        }
+        .input-area button {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            border: none;
+            background: #075e54;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+        .input-area button:hover { background: #128c7e; }
+        .input-area button:disabled { background: #aaa; cursor: not-allowed; }
+        .sim-badge {
+            background: #fff3cd;
+            color: #856404;
+            font-size: 11px;
+            text-align: center;
+            padding: 4px 8px;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+<div class="phone-frame">
+    <div class="wa-header">
+        <span class="back">&#8249;</span>
+        <div class="avatar" id="avatar-container">
+            <span id="avatar-emoji">&#127978;</span>
+        </div>
+        <div class="info">
+            <div class="name">Lopez Impresores</div>
+            <div class="sub">Bot de cotización</div>
+        </div>
+    </div>
+
+    <div class="sim-badge">&#9881;&#65039; Modo simulador — los mensajes no se envían por WhatsApp</div>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="input-area">
+        <input type="text" id="msgInput" placeholder="Escribe un mensaje..." autocomplete="off" />
+        <button id="sendBtn" title="Enviar">&#10148;</button>
+    </div>
+</div>
+
+<script>
+    var messagesEl = document.getElementById('messages');
+    var input = document.getElementById('msgInput');
+    var sendBtn = document.getElementById('sendBtn');
+
+    // Cargar logo si existe
+    var logoImg = new Image();
+    logoImg.onload = function() {
+        var container = document.getElementById('avatar-container');
+        document.getElementById('avatar-emoji').style.display = 'none';
+        container.appendChild(logoImg);
+        logoImg.id = 'sim-logo';
+    };
+    logoImg.src = '/logo.png';
+    logoImg.onerror = function() {
+        logoImg.src = '/logo.jpg';
+        logoImg.onerror = null;
+    };
+
+    function getTime() {
+        var now = new Date();
+        return String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    }
+
+    function formatWA(text) {
+        var escaped = text
+            .split('&').join('&amp;')
+            .split('<').join('&lt;')
+            .split('>').join('&gt;');
+        return escaped.replace(/\*(.*?)\*/g, '<b>$1</b>');
+    }
+
+    function getPdfName() {
+        var d = new Date();
+        return 'Cotizacion_Lopez_Impresores_' +
+            String(d.getDate()).padStart(2,'0') + '_' +
+            String(d.getMonth()+1).padStart(2,'0') + '_' +
+            d.getFullYear() + '.pdf';
+    }
+
+    function addMessage(who, content, type, extra) {
+        type = type || 'text';
+        extra = extra || {};
+
+        var wrap = document.createElement('div');
+        wrap.className = 'bubble-wrap ' + who;
+
+        var bubble = document.createElement('div');
+        bubble.className = 'bubble';
+
+        if (type === 'image_text' && who === 'bot') {
+            var simLogo = document.getElementById('sim-logo');
+            if (simLogo) {
+                var imgClone = document.createElement('img');
+                imgClone.src = simLogo.src;
+                imgClone.className = 'logo-bubble';
+                bubble.appendChild(imgClone);
+            }
+            var txt = document.createElement('div');
+            txt.innerHTML = formatWA(content);
+            bubble.appendChild(txt);
+
+        } else if (type === 'pdf') {
+            var link = document.createElement('a');
+            link.href = extra.url || '#';
+            link.target = '_blank';
+            link.className = 'pdf-link';
+            var icon = document.createElement('span');
+            icon.className = 'pdf-icon';
+            icon.textContent = '📄';
+            link.appendChild(icon);
+            link.appendChild(document.createTextNode(' ' + getPdfName()));
+            bubble.appendChild(link);
+            if (content) {
+                var txt2 = document.createElement('div');
+                txt2.innerHTML = formatWA(content);
+                bubble.appendChild(txt2);
+            }
+
+        } else {
+            bubble.innerHTML = formatWA(content);
+        }
+
+        var time = document.createElement('div');
+        time.className = 'time';
+        time.textContent = getTime();
+        bubble.appendChild(time);
+
+        wrap.appendChild(bubble);
+        messagesEl.appendChild(wrap);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function showTyping() {
+        var el = document.createElement('div');
+        el.className = 'typing';
+        el.id = 'typing-indicator';
+        el.innerHTML = '<span></span><span></span><span></span>';
+        messagesEl.appendChild(el);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function hideTyping() {
+        var el = document.getElementById('typing-indicator');
+        if (el) el.remove();
+    }
+
+    async function sendMessage() {
+        var text = input.value.trim();
+        if (!text) return;
+
+        input.value = '';
+        sendBtn.disabled = true;
+        addMessage('user', text);
+        showTyping();
+
+        try {
+            var res = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: text })
+            });
+            var data = await res.json();
+            hideTyping();
+
+            if (data.responses) {
+                for (var r of data.responses) {
+                    addMessage('bot', r.text, r.type, { url: r.url });
+                }
+            } else {
+                addMessage('bot', 'Error al obtener respuesta.');
+            }
+        } catch (err) {
+            hideTyping();
+            addMessage('bot', 'Error de conexión con el servidor.');
+        }
+
+        sendBtn.disabled = false;
+        input.focus();
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') sendMessage();
+    });
+
+    window.addEventListener('load', async function() {
+        await fetch('/chat/reset', { method: 'POST' }).catch(function(){});
+        showTyping();
+        try {
+            var res = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: 'hola' })
+            });
+            var data = await res.json();
+            hideTyping();
+            if (data.responses) {
+                for (var r of data.responses) {
+                    addMessage('bot', r.text, r.type, { url: r.url });
+                }
+            }
+        } catch(e) {
+            hideTyping();
+        }
+        input.focus();
+    });
+</script>
+</body>
+</html>

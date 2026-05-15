@@ -13,8 +13,8 @@ const dbConfig = {
         idleTimeoutMillis: 30000
     },
     options: {
-        encrypt: false, // para desarrollo local usualmente es false, o true si estás en Azure
-        trustServerCertificate: true // útil para SQL Express local
+        encrypt: true,
+        trustServerCertificate: true
     }
 };
 
@@ -51,14 +51,24 @@ async function query(queryString) {
 async function searchProducts(searchTerm) {
     try {
         const pool = await connectToDatabase();
-        // Buscar productos que coincidan con la descripción (limitado a 15)
-        const result = await pool.request()
-            .input('term', sql.VarChar, `%${searchTerm}%`)
-            .query(`
-                SELECT TOP 15 [ARTICULO], [DESCRIP], [PRECIO1] 
-                FROM prods 
-                WHERE [DESCRIP] LIKE @term
-            `);
+
+        // Dividir en palabras y filtrar vacíos
+        const words = searchTerm.trim().split(/\s+/).filter(w => w.length > 0);
+
+        // Construir un AND LIKE por cada palabra
+        const request = pool.request();
+        const conditions = words.map((word, i) => {
+            request.input(`term${i}`, sql.VarChar, `%${word}%`);
+            return `[DESCRIP] LIKE @term${i} COLLATE Latin1_General_CI_AI`;
+        });
+
+        const result = await request.query(`
+            SELECT [ARTICULO], [DESCRIP], [PRECIO1]
+            FROM prods
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY [DESCRIP]
+        `);
+
         return result.recordset;
     } catch (err) {
         console.error('Error en searchProducts:', err);

@@ -42,7 +42,7 @@ async function generateQuotePdf(user, items) {
             doc.font('Helvetica-Bold').fillColor(brandColor).fontSize(20).text('COTIZACIÓN', 50, 150);
             
             // Datos del Cliente y Fecha (Movidos acordemente)
-            doc.font('Helvetica').fillColor('#000').fontSize(11).text(`Fecha: ${new Date().toLocaleDateString('es-MX')}`, 50, 180);
+            doc.font('Helvetica').fillColor('#000').fontSize(11).text(`Fecha: ${new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}`, 50, 180);
             doc.text(`Cliente: ${user.name}`, 50, 195);
             doc.text(`Teléfono: ${user.phone}`, 50, 210);
 

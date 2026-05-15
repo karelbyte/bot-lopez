@@ -1,10 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const QRCode = require('qrcode');
-const { startBot, botState } = require('./bot.js');
+const path = require('path');
+const fs = require('fs');
+const { startBot, botState, processMessage, userSessions } = require('./bot.js');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.QR_WEB_PORT || 80;
 
 app.use(express.json());
 
@@ -197,6 +199,56 @@ app.get('/qr', async (req, res) => {
         res.status(500).send('Error al generar QR');
     }
 });
+
+// ─── Simulador: API de chat ───────────────────────────────────────────────────
+// Usa un número ficticio fijo para no mezclar con clientes reales
+const SIMULATOR_PHONE = 'simulator_preview';
+
+// Resetear sesión del simulador (POST desde JS, GET desde navegador)
+app.all('/chat/reset', (_req, res) => {
+    if (userSessions[SIMULATOR_PHONE]) {
+        delete userSessions[SIMULATOR_PHONE];
+    }
+    res.json({ ok: true, message: 'Sesión del simulador reiniciada.' });
+});
+
+app.post('/chat', async (req, res) => {
+    const { message } = req.body;
+    if (!message || typeof message !== 'string') {
+        return res.status(400).json({ error: 'Campo "message" requerido.' });
+    }
+
+    try {
+        const responses = await processMessage(SIMULATOR_PHONE, message, true);
+
+        // Convertir respuestas al formato que entiende el frontend
+        const output = responses.map(r => {
+            if (r.type === 'pdf') {
+                // Devolver URL de descarga en lugar de ruta local
+                const fileName = path.basename(r.pdfPath);
+                return { type: 'pdf', text: r.text, url: `/quotes_pdfs/${fileName}` };
+            }
+            return { type: r.type, text: r.text };
+        });
+
+        res.json({ responses: output });
+    } catch (err) {
+        console.error('Error en /chat:', err);
+        res.status(500).json({ error: 'Error interno del servidor.' });
+    }
+});
+
+// Servir PDFs generados para el simulador
+app.use('/quotes_pdfs', express.static(path.join(__dirname, 'quotes_pdfs')));
+
+// ─── Simulador: UI ────────────────────────────────────────────────────────────
+app.get('/simulator', (_req, res) => {
+    res.sendFile(path.join(__dirname, 'simulator.html'));
+});
+
+// Servir logo para el simulador
+app.use('/logo.png', express.static(path.join(__dirname, 'logo.png')));
+app.use('/logo.jpg', express.static(path.join(__dirname, 'logo.jpg')));
 
 app.listen(PORT, () => {
     console.log(`Servidor Express corriendo en http://localhost:${PORT}`);
