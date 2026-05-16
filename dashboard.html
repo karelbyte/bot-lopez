@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Promociones | Lopez Impresores</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --brand-color: #9F1C87;
+            --brand-hover: #7a1568;
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+            --text-main: #1f2937;
+            --text-muted: #6b7280;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        header {
+            width: 100%;
+            background-color: var(--brand-color);
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .container {
+            max-width: 900px;
+            width: 95%;
+            margin: 30px auto;
+        }
+        .card {
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 30px;
+        }
+        h2 { margin-top: 0; color: var(--brand-color); }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 14px; }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: var(--brand-color);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: var(--brand-hover); }
+        button.secondary { background-color: var(--text-muted); }
+        button.danger { background-color: var(--danger); }
+
+        .promo-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .promo-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #e5e7eb;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+        .promo-card.inactive { opacity: 0.6; }
+        .promo-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-welcome { background: #dbeafe; color: #1e40af; }
+        .badge-postname { background: #fef3c7; color: #92400e; }
+        .badge-prequote { background: #dcfce7; color: #166534; }
+
+        .promo-text { font-size: 14px; margin: 10px 0; flex-grow: 1; }
+        .promo-img { 
+            width: 100%; 
+            height: 150px; 
+            object-fit: cover; 
+            border-radius: 8px; 
+            margin-bottom: 10px;
+            background: #f3f4f6;
+        }
+        .promo-actions { display: flex; gap: 10px; margin-top: 15px; }
+        .promo-actions button { padding: 8px 12px; font-size: 13px; flex: 1; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Panel de Gestión de Promociones</h1>
+</header>
+
+<div class="container">
+    <div style="margin-bottom: 20px; text-align: left;">
+        <a href="/" style="color: var(--brand-color); text-decoration: none; font-weight: 600;">← Volver al Inicio</a>
+    </div>
+
+    <!-- Formulario para agregar -->
+    <div class="card">
+        <h2>Nueva Promoción</h2>
+        <div class="form-group">
+            <label>Posición en el Bot</label>
+            <select id="position">
+                <option value="WELCOME">Bienvenida Inicial</option>
+                <option value="POST_NAME">Después de dar el nombre</option>
+                <option value="PRE_QUOTE">Antes de iniciar cotización</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Texto de la Promoción</label>
+            <textarea id="promoText" rows="3" placeholder="Ej: ¡Aprovecha hoy 10% de descuento!"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Imagen de la Promoción (JPG/PNG)</label>
+            <input type="file" id="imageFile" accept="image/*">
+        </div>
+        <button onclick="addPromo()">Guardar Promoción</button>
+    </div>
+
+    <!-- Listado -->
+    <h2>Promociones Actuales</h2>
+    <div id="promoList" class="promo-list">
+        <!-- Se cargan dinámicamente -->
+    </div>
+</div>
+
+<script>
+    async function fetchPromos() {
+        const res = await fetch('/api/promotions');
+        const promos = await res.json();
+        const container = document.getElementById('promoList');
+        container.innerHTML = '';
+
+        promos.forEach(p => {
+            const card = document.createElement('div');
+            card.className = `promo-card ${p.active ? '' : 'inactive'}`;
+            
+            const badgeClass = `badge-${p.position.toLowerCase().replace('_', '')}`;
+            
+            card.innerHTML = `
+                <span class="promo-badge ${badgeClass}">${p.position}</span>
+                ${p.image_url ? `<img src="${p.image_url}" class="promo-img">` : ''}
+                <div class="promo-text">${p.text}</div>
+                <div class="promo-actions">
+                    <button class="secondary" onclick="togglePromo(${p.id}, ${p.active ? 0 : 1})">
+                        ${p.active ? 'Desactivar' : 'Activar'}
+                    </button>
+                    <button class="danger" onclick="deletePromo(${p.id})">Eliminar</button>
+                </div>
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    async function addPromo() {
+        const text = document.getElementById('promoText').value;
+        const imageFile = document.getElementById('imageFile').files[0];
+        const position = document.getElementById('position').value;
+
+        if (!text) return alert('El texto es obligatorio');
+
+        const formData = new FormData();
+        formData.append('text', text);
+        formData.append('position', position);
+        if (imageFile) formData.append('image', imageFile);
+
+        const res = await fetch('/api/promotions', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (res.ok) {
+            document.getElementById('promoText').value = '';
+            document.getElementById('imageFile').value = '';
+            fetchPromos();
+        }
+    }
+
+    async function togglePromo(id, active) {
+        await fetch(`/api/promotions/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active })
+        });
+        fetchPromos();
+    }
+
+    async function deletePromo(id) {
+        if (!confirm('¿Seguro que quieres eliminar esta promoción?')) return;
+        await fetch(`/api/promotions/${id}`, { method: 'DELETE' });
+        fetchPromos();
+    }
+
+    fetchPromos();
+</script>
+
+</body>
+</html>

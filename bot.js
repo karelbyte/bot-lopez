@@ -2,8 +2,8 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
-const { connectToDatabase, searchProducts, createSqlClient } = require('./db.js');
-const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote } = require('./localDb.js');
+const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido } = require('./db.js');
+const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
 
 const botState = {
@@ -15,9 +15,9 @@ const botState = {
 // Máquina de estados en memoria para cada usuario
 const userSessions = {};
 
-function getSession(phone) {
-    if (!userSessions[phone]) {
-        userSessions[phone] = {
+function getSession(identifier) {
+    if (!userSessions[identifier]) {
+        userSessions[identifier] = {
             state: 'IDLE',   // IDLE, ASKING_NAME, SELECTING_ITEM, ASKING_QUANTITY
             allResults: [],  // todos los resultados de la búsqueda actual
             searchPage: 0,   // página actual (0-based)
@@ -25,7 +25,7 @@ function getSession(phone) {
             selectedItem: null
         };
     }
-    return userSessions[phone];
+    return userSessions[identifier];
 }
 
 const PAGE_SIZE = 15;
@@ -73,25 +73,41 @@ function buildResultsPage(session) {
  *                           Las búsquedas de productos sí se ejecutan (lectura real).
  *                           La sesión en memoria sí se usa (no es persistente).
  */
-async function processMessage(phone, textMessage, dryRun = false) {
+async function processMessage(identifier, textMessage, dryRun = false) {
     const responses = [];
     const textLower = textMessage.toLowerCase().trim();
-    const session = getSession(phone);
+    const session = getSession(identifier);
 
     const reply = (text) => responses.push({ type: 'text', text });
     const replyWithLogo = (text) => responses.push({ type: 'image_text', text });
     const replyPdf = (pdfPath, caption) => responses.push({ type: 'pdf', pdfPath, text: caption });
+
+    const handlePromotions = async (position) => {
+        try {
+            const promos = await getActivePromotions(position);
+            for (const promo of promos) {
+                if (promo.image_url) {
+                    responses.push({ type: 'image', text: promo.text, url: promo.image_url });
+                } else {
+                    responses.push({ type: 'text', text: promo.text });
+                }
+            }
+        } catch (err) {
+            console.error('Error al manejar promociones:', err);
+        }
+    };
 
     // En dryRun simulamos un usuario ficticio en memoria sin tocar SQLite
     const simulatedUser = dryRun ? (session.simulatedUser || null) : null;
 
     try {
         // 1. Verificar si el usuario existe
-        let user = dryRun ? simulatedUser : await getUser(phone);
+        let user = dryRun ? simulatedUser : await getUser(identifier);
 
         if (!user) {
             if (session.state !== 'ASKING_NAME') {
                 session.state = 'ASKING_NAME';
+                await handlePromotions('WELCOME');
                 const welcomeText = `¡Hola! Bienvenido a *Lopez Impresores*.
 🌐 https://lopezimpresores.mx/
 📞 (755) 554-2478 y 554-2578
@@ -101,12 +117,13 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
                 replyWithLogo(welcomeText);
             } else {
                 if (!dryRun) {
-                    await createUser(phone, textMessage);
+                    await createUser(identifier, textMessage);
                 } else {
                     // En dryRun guardamos el usuario solo en memoria
-                    session.simulatedUser = { phone, name: textMessage };
+                    session.simulatedUser = { phone: identifier, name: textMessage };
                 }
                 session.state = 'IDLE';
+                await handlePromotions('POST_NAME');
                 reply(`¡Gracias, ${textMessage}! Ya te hemos registrado.\n\n¿Qué artículo deseas buscar o cotizar? Escribe el nombre o parte del nombre.`);
             }
             return responses;
@@ -117,7 +134,7 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
             // En dryRun los ítems están en memoria
             const pending = dryRun
                 ? (session.simulatedQuote || [])
-                : await getPendingQuote(phone);
+                : await getPendingQuote(identifier);
 
             if (pending.length === 0) {
                 reply('No tienes artículos en tu cotización actual. Escribe un producto para buscar.');
@@ -127,22 +144,40 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
             reply('⏳ Generando tu cotización en formato PDF, por favor espera un momento...');
 
             try {
-                const pdfPath = await generateQuotePdf(user, pending);
-                replyPdf(pdfPath, `¡Listo, ${user.name}! Aquí tienes tu cotización en PDF.\n\n¡Gracias por cotizar con nosotros!`);
-
+                let pedidoId = null;
                 if (!dryRun) {
-                    const clientCode = await createSqlClient(user.name);
-                    if (clientCode) {
-                        await updateUserCode(phone, clientCode);
+                    try {
+                        pedidoId = await createSqlPedido(pending, user.name);
+                    } catch (sqlErr) {
+                        console.error('Error al registrar pedido en SQL:', sqlErr);
                     }
                 }
+
+                const pdfPath = await generateQuotePdf(user, pending, pedidoId);
+                
+                let orderMsg = `¡Listo, ${user.name}! Aquí tienes tu cotización en PDF.\n\n¡Gracias por cotizar con nosotros!`;
+
+                if (pedidoId) {
+                    orderMsg += `\n\n✅ Se ha generado la cotización oficial en nuestro sistema con el número: *${pedidoId}*`;
+                }
+
+                if (!dryRun) {
+                    await finalizeQuote(identifier, pedidoId);
+                }
+
+                replyPdf(pdfPath, orderMsg);
+
+                // Limpiar estado de la sesión
+                delete session.state;
+                delete session.selectedItem;
+                if (dryRun) delete session.simulatedQuote;
             } catch (err) {
                 console.error('Error generando PDF:', err);
                 reply('Hubo un error al generar el PDF. Por favor intenta de nuevo.');
             }
 
             if (!dryRun) {
-                await finalizeQuote(phone);
+                await finalizeQuote(identifier);
             } else {
                 session.simulatedQuote = [];
             }
@@ -153,7 +188,7 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
         // Cancelar cotización
         if (textLower === 'cancelar') {
             if (!dryRun) {
-                await clearPendingQuote(phone);
+                await clearPendingQuote(identifier);
             } else {
                 session.simulatedQuote = [];
             }
@@ -170,7 +205,7 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
         const genericPhrases = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'ok', 'gracias', 'gracias!'];
         if (session.state === 'IDLE' && genericPhrases.includes(textLower)) {
             if (!dryRun) {
-                await clearPendingQuote(phone);
+                await clearPendingQuote(identifier);
             } else {
                 session.simulatedQuote = [];
             }
@@ -247,7 +282,7 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                 const montoIva = totalUnitario - precioBase;
 
                 if (!dryRun) {
-                    await addItemToQuote(phone, item.ARTICULO, item.DESCRIP, cantidad, precioBase, montoIva, totalUnitario, item.IMPUESTO);
+                    await addItemToQuote(identifier, item.ARTICULO, item.DESCRIP, cantidad, precioBase, montoIva, totalUnitario, item.IMPUESTO);
                 } else {
                     // Acumular ítems en memoria para poder generar el PDF de prueba
                     if (!session.simulatedQuote) session.simulatedQuote = [];
@@ -315,45 +350,61 @@ async function startBot() {
         }
     });
 
-    sock.ev.on('messages.upsert', async (m) => {
-        if (m.type !== 'notify') return;
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        for (const msg of messages) {
+            if (!msg.message || msg.key.fromMe) continue;
 
-        const from = msg.key.remoteJid;
-        const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        if (!textMessage) return;
+            const from = msg.key.remoteJid;
+            const pushName = msg.pushName || 'Cliente';
+            const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
 
-        const phone = from.split('@')[0];
-        const responses = await processMessage(phone, textMessage);
+            console.log(`[BOT] Mensaje de: ${pushName} (${from})`);
 
-        for (const res of responses) {
-            if (res.type === 'text') {
-                await sock.sendMessage(from, { text: res.text }, { quoted: msg });
+            // Ignorar mensajes de grupos o estados
+            if (from.endsWith('@g.us') || from === 'status@broadcast') continue;
 
-            } else if (res.type === 'image_text') {
-                const logoPng = path.join(__dirname, 'logo.png');
-                const logoJpg = path.join(__dirname, 'logo.jpg');
-                if (fs.existsSync(logoPng)) {
-                    await sock.sendMessage(from, { image: { url: logoPng }, caption: res.text }, { quoted: msg });
-                } else if (fs.existsSync(logoJpg)) {
-                    await sock.sendMessage(from, { image: { url: logoJpg }, caption: res.text }, { quoted: msg });
-                } else {
+            // Verificar si el usuario existe en SQLite
+            let user = await getUser(from);
+            // No creamos el usuario automáticamente para permitir que el bot le pregunte su nombre real en el flujo de bienvenida
+
+            if (!textMessage) continue;
+
+            // Procesar el mensaje usando el JID completo como identificador
+            const responses = await processMessage(from, textMessage);
+
+            for (const res of responses) {
+                if (res.type === 'text') {
                     await sock.sendMessage(from, { text: res.text }, { quoted: msg });
-                }
 
-            } else if (res.type === 'pdf') {
-                const now = new Date();
-                const dd = String(now.getDate()).padStart(2, '0');
-                const mm = String(now.getMonth() + 1).padStart(2, '0');
-                const yyyy = now.getFullYear();
-                const pdfFileName = `Cotizacion_Lopez_Impresores_${dd}_${mm}_${yyyy}.pdf`;
-                await sock.sendMessage(from, {
-                    document: { url: res.pdfPath },
-                    mimetype: 'application/pdf',
-                    fileName: pdfFileName,
-                    caption: res.text
-                });
+                } else if (res.type === 'image_text') {
+                    const logoPng = path.join(__dirname, 'logo.png');
+                    const logoJpg = path.join(__dirname, 'logo.jpg');
+                    if (fs.existsSync(logoPng)) {
+                        await sock.sendMessage(from, { image: { url: logoPng }, caption: res.text }, { quoted: msg });
+                    } else if (fs.existsSync(logoJpg)) {
+                        await sock.sendMessage(from, { image: { url: logoJpg }, caption: res.text }, { quoted: msg });
+                    } else {
+                        await sock.sendMessage(from, { text: res.text }, { quoted: msg });
+                    }
+
+                } else if (res.type === 'image') {
+                    const finalImageUrl = res.url.startsWith('/') ? path.join(__dirname, res.url) : res.url;
+                    await sock.sendMessage(from, { image: { url: finalImageUrl }, caption: res.text }, { quoted: msg });
+
+                } else if (res.type === 'pdf') {
+                    const now = new Date();
+                    const dd = String(now.getDate()).padStart(2, '0');
+                    const mm = String(now.getMonth() + 1).padStart(2, '0');
+                    const yyyy = now.getFullYear();
+                    const pdfFileName = `Cotizacion_Lopez_Impresores_${dd}_${mm}_${yyyy}.pdf`;
+                    await sock.sendMessage(from, {
+                        document: { url: res.pdfPath },
+                        mimetype: 'application/pdf',
+                        fileName: pdfFileName,
+                        caption: res.text
+                    });
+                }
             }
         }
     });
@@ -361,9 +412,48 @@ async function startBot() {
     return sock;
 }
 
+/**
+ * Envía una campaña a una lista de clientes
+ */
+async function sendBroadcast(sock, clients, text, imagePath) {
+    if (!sock) throw new Error('Bot no conectado');
+    console.log(`[CAMPAÑA] Iniciando envío masivo a ${clients.length} clientes registrados.`);
+    
+    for (const client of clients) {
+        const jid = client.phone.includes('@') ? client.phone : `${client.phone}@s.whatsapp.net`;
+        
+        // No enviar al simulador
+        if (jid.includes('simulator')) {
+            console.log(`[CAMPAÑA] Saltando contacto de simulador: ${jid}`);
+            continue;
+        }
+
+        try {
+            console.log(`[CAMPAÑA] Intentando enviar a: ${jid}...`);
+            const personalizedText = text.replace(/\[nombre\]/gi, client.name || 'Cliente');
+            
+            if (imagePath) {
+                const absolutePath = path.join(__dirname, imagePath);
+                await sock.sendMessage(jid, { image: { url: absolutePath }, caption: personalizedText });
+            } else {
+                await sock.sendMessage(jid, { text: personalizedText });
+            }
+            
+            console.log(`[CAMPAÑA] ✅ Mensaje enviado correctamente a: ${jid}`);
+            
+            const delay = Math.floor(Math.random() * 4000) + 4000;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            
+        } catch (err) {
+            console.error(`[CAMPAÑA] ❌ Error enviando a ${jid}:`, err);
+        }
+    }
+}
+
 module.exports = {
     startBot,
     botState,
     processMessage,
-    userSessions
+    userSessions,
+    sendBroadcast
 };

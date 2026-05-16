@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit-table');
 
-async function generateQuotePdf(user, items) {
+async function generateQuotePdf(user, items, pedidoId = null) {
     return new Promise((resolve, reject) => {
         try {
             const dir = path.join(__dirname, 'quotes_pdfs');
@@ -38,13 +38,15 @@ async function generateQuotePdf(user, items) {
             // Línea divisoria
             doc.moveTo(50, 110).lineTo(545, 110).strokeColor(brandColor).lineWidth(2).stroke();
 
-            // Título de la Cotización (Movido más abajo para evitar encimarse con el logo)
+            // Título de la Cotización
             doc.font('Helvetica-Bold').fillColor(brandColor).fontSize(20).text('COTIZACIÓN', 50, 150);
+            if (pedidoId) {
+                doc.fontSize(14).text(`Folio: ${pedidoId}`, 0, 155, { align: 'right' });
+            }
             
             // Datos del Cliente y Fecha (Movidos acordemente)
             doc.font('Helvetica').fillColor('#000').fontSize(11).text(`Fecha: ${new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}`, 50, 180);
             doc.text(`Cliente: ${user.name}`, 50, 195);
-            doc.text(`Teléfono: ${user.phone}`, 50, 210);
 
             doc.moveDown(2);
 

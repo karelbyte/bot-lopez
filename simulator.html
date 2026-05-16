@@ -274,6 +274,19 @@
             txt.innerHTML = formatWA(content);
             bubble.appendChild(txt);
 
+        } else if (type === 'image' && who === 'bot') {
+            if (extra.url) {
+                var promoImg = document.createElement('img');
+                promoImg.src = extra.url;
+                promoImg.className = 'logo-bubble';
+                bubble.appendChild(promoImg);
+            }
+            if (content) {
+                var txtPromo = document.createElement('div');
+                txtPromo.innerHTML = formatWA(content);
+                bubble.appendChild(txtPromo);
+            }
+
         } else if (type === 'pdf') {
             var link = document.createElement('a');
             link.href = extra.url || '#';

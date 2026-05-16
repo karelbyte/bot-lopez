@@ -3,7 +3,21 @@ const express = require('express');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
-const { startBot, botState, processMessage, userSessions } = require('./bot.js');
+const { startBot, botState, processMessage, userSessions, sendBroadcast } = require('./bot.js');
+const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign } = require('./localDb.js');
+const multer = require('multer');
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = path.join(__dirname, 'promos_imgs');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage });
 
 const app = express();
 const PORT = process.env.QR_WEB_PORT || 80;
@@ -111,12 +125,20 @@ const getHtmlTemplate = (title, content, headScript = '') => `
 `;
 
 app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'hub.html'));
+});
+
+app.get('/connection', (req, res) => {
     if (botState.hasConnected) {
         const content = `
             <h1>✅ Bot Conectado</h1>
             <p>El bot de <strong>Lopez Impresores</strong> está activo y listo para cotizar.</p>
             <div class="status-badge active">
                 Estado: ${botState.connected ? 'Conectado a WhatsApp' : 'Intentando reconectar...'}
+            </div>
+            <div style="margin-top: 30px; display: flex; gap: 10px; justify-content: center;">
+                <a href="/" style="text-decoration: none; background: #6b7280; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px;">← Volver al Panel</a>
+                <a href="/simulator" style="text-decoration: none; background: #25d366; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px;">Ir al Simulador</a>
             </div>
         `;
         const script = `
@@ -154,6 +176,9 @@ app.get('/', (req, res) => {
         
         <br>
         <div class="status-badge">Esperando vinculación...</div>
+        <div style="margin-top: 20px;">
+            <a href="/" style="text-decoration: none; color: var(--brand-color); font-weight: 600;">← Volver al Panel</a>
+        </div>
     `;
 
     const script = `
@@ -166,7 +191,7 @@ app.get('/', (req, res) => {
                 try {
                     const res = await fetch('/status');
                     const data = await res.json();
-                    if (data.hasConnected) window.location.replace('/');
+                    if (data.hasConnected) window.location.replace('/connection');
                 } catch(e) {}
             }
             window.addEventListener('load', () => {
@@ -224,11 +249,11 @@ app.post('/chat', async (req, res) => {
         // Convertir respuestas al formato que entiende el frontend
         const output = responses.map(r => {
             if (r.type === 'pdf') {
-                // Devolver URL de descarga en lugar de ruta local
                 const fileName = path.basename(r.pdfPath);
                 return { type: 'pdf', text: r.text, url: `/quotes_pdfs/${fileName}` };
             }
-            return { type: r.type, text: r.text };
+            // Importante: incluir la URL para imágenes para que el simulador las muestre
+            return { type: r.type, text: r.text, url: r.url };
         });
 
         res.json({ responses: output });
@@ -246,14 +271,133 @@ app.get('/simulator', (_req, res) => {
     res.sendFile(path.join(__dirname, 'simulator.html'));
 });
 
+// ─── Dashboard de Promociones ────────────────────────────────────────────────
+app.get('/dashboard', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dashboard.html'));
+});
+
+// API para promociones
+app.get('/api/promotions', async (req, res) => {
+    try {
+        const promos = await getAllPromotions();
+        res.json(promos);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/promotions', upload.single('image'), async (req, res) => {
+    try {
+        const { text, position } = req.body;
+        const image_url = req.file ? `/promos_imgs/${req.file.filename}` : '';
+        await addPromotion(text, image_url, position);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.use('/promos_imgs', express.static(path.join(__dirname, 'promos_imgs')));
+
+app.patch('/api/promotions/:id', async (req, res) => {
+    try {
+        const { active } = req.body;
+        await updatePromotion(req.params.id, active);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/promotions/:id', async (req, res) => {
+    try {
+        await deletePromotion(req.params.id);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Analítica ───────────────────────────────────────────────────────────────
+app.get('/analytics', (req, res) => {
+    res.sendFile(path.join(__dirname, 'analytics.html'));
+});
+
+app.get('/api/analytics', async (req, res) => {
+    try {
+        const stats = await getAnalyticsStats();
+        res.json(stats);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Campañas de Difusión ────────────────────────────────────────────────────
+app.get('/campaigns', (req, res) => {
+    res.sendFile(path.join(__dirname, 'campaigns.html'));
+});
+
+app.get('/api/campaigns', async (req, res) => {
+    try {
+        const campaigns = await getAllCampaigns();
+        res.json(campaigns);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/campaigns', upload.single('image'), async (req, res) => {
+    try {
+        const { text } = req.body;
+        const image_url = req.file ? `/promos_imgs/${req.file.filename}` : '';
+        await addCampaign(text, image_url);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/campaigns/:id', async (req, res) => {
+    try {
+        await deleteCampaign(req.params.id);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/campaigns/:id/send', async (req, res) => {
+    try {
+        const campaigns = await getAllCampaigns();
+        const campaign = campaigns.find(c => c.id == req.params.id);
+        if (!campaign) return res.status(404).json({ error: 'Campaña no encontrada' });
+
+        const clients = await getAllClients();
+        if (clients.length === 0) return res.status(400).json({ error: 'No hay clientes registrados' });
+
+        // Ejecutar en segundo plano para no bloquear la petición
+        sendBroadcast(botSock, clients, campaign.text, campaign.image_url)
+            .then(() => console.log(`Campaña ${campaign.id} finalizada.`))
+            .catch(err => console.error(`Error en campaña ${campaign.id}:`, err));
+
+        res.json({ ok: true, message: `Iniciando envío a ${clients.length} clientes.` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Servir logo para el simulador
 app.use('/logo.png', express.static(path.join(__dirname, 'logo.png')));
 app.use('/logo.jpg', express.static(path.join(__dirname, 'logo.jpg')));
+
+let botSock = null;
 
 app.listen(PORT, () => {
     console.log(`Servidor Express corriendo en http://localhost:${PORT}`);
 });
 
-startBot().catch(err => {
+startBot().then(sock => {
+    botSock = sock;
+}).catch(err => {
     console.error('Error iniciando el bot:', err);
 });
