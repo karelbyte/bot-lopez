@@ -3,3 +3,4 @@ node_modules/
 sessions/
 quotes_pdfs/
 local_bot.db
+docs/

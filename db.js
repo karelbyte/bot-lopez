@@ -63,7 +63,7 @@ async function searchProducts(searchTerm) {
         });
 
         const result = await request.query(`
-            SELECT [ARTICULO], [DESCRIP], [PRECIO1]
+            SELECT [ARTICULO], [DESCRIP], [PRECIO1], [IMPUESTO]
             FROM prods
             WHERE ${conditions.join(' AND ')}
             ORDER BY [DESCRIP]

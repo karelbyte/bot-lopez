@@ -34,8 +34,11 @@ async function getLocalDb() {
                     quote_id INTEGER,
                     articulo TEXT,
                     descrip TEXT,
-                    precio REAL,
                     cantidad INTEGER,
+                    precio_unitario REAL,
+                    monto_iva REAL,
+                    total_unitario REAL,
+                    impuesto TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (quote_id) REFERENCES quotes(id) ON DELETE CASCADE
                 );
@@ -76,7 +79,7 @@ async function getActiveQuoteId(db, phone) {
 }
 
 // Agregar un artículo a la cotización (crea la cabecera si no existe)
-async function addItemToQuote(phone, articulo, descrip, precio, cantidad) {
+async function addItemToQuote(phone, articulo, descrip, cantidad, precio_unitario, monto_iva, total_unitario, impuesto) {
     const db = await getLocalDb();
     
     let quoteId = await getActiveQuoteId(db, phone);
@@ -87,8 +90,8 @@ async function addItemToQuote(phone, articulo, descrip, precio, cantidad) {
     }
 
     await db.run(
-        'INSERT INTO quote_details (quote_id, articulo, descrip, precio, cantidad) VALUES (?, ?, ?, ?, ?)',
-        [quoteId, articulo, descrip, precio, cantidad]
+        'INSERT INTO quote_details (quote_id, articulo, descrip, cantidad, precio_unitario, monto_iva, total_unitario, impuesto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [quoteId, articulo, descrip, cantidad, precio_unitario, monto_iva, total_unitario, impuesto]
     );
 }
 

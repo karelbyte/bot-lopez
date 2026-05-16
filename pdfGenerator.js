@@ -48,43 +48,59 @@ async function generateQuotePdf(user, items) {
 
             doc.moveDown(2);
 
-            let total = 0;
+            let totalGeneral = 0;
+            let totalSubtotal = 0;
+            let totalIva = 0;
+
             const tableRows = items.map(item => {
-                const subtotal = item.cantidad * item.precio;
-                total += subtotal;
+                const subtotalItem = item.total_unitario * item.cantidad;
+
+                totalSubtotal += item.precio_unitario * item.cantidad;
+                totalIva += item.monto_iva * item.cantidad;
+                totalGeneral += subtotalItem;
+
                 return [
+                    item.articulo || '',
                     item.cantidad.toString(),
                     item.descrip,
-                    `$${item.precio.toFixed(2)}`,
-                    `$${subtotal.toFixed(2)}`
+                    `$${item.precio_unitario.toFixed(2)}`,
+                    `$${item.monto_iva.toFixed(2)}`,
+                    `$${item.total_unitario.toFixed(2)}`,
+                    `$${subtotalItem.toFixed(2)}`
                 ];
             });
-
-            // Configuración de la Tabla (Ajustada a ancho total de ~495)
+            
+            // Configuración de la Tabla (Ancho total ~495)
             const table = {
                 title: "Detalle de Artículos",
                 headers: [
-                    { label: "Cant.", width: 50, align: "center" },
-                    { label: "Descripción", width: 265 },
-                    { label: "P. Unitario", width: 90, align: "right" },
-                    { label: "Subtotal", width: 90, align: "right" }
+                    { label: "Artículo", width: 60 },
+                    { label: "Cant.", width: 35, align: "center" },
+                    { label: "Descripción", width: 140 },
+                    { label: "P. Base", width: 65, align: "right" },
+                    { label: "I.V.A.", width: 60, align: "right" },
+                    { label: "P. Total", width: 65, align: "right" },
+                    { label: "Subtotal", width: 70, align: "right" }
                 ],
                 rows: tableRows
             };
 
             doc.table(table, {
-                prepareHeader: () => doc.font("Helvetica-Bold").fontSize(10).fillColor('#000000'),
+                prepareHeader: () => doc.font("Helvetica-Bold").fontSize(9).fillColor('#000000'),
                 prepareRow: (row, index, column, rect, font) => {
-                    doc.font("Helvetica").fontSize(10).fillColor('#000000');
+                    doc.font("Helvetica").fontSize(9).fillColor('#000000');
                     return doc;
                 },
                 columnSpacing: 5,
                 padding: 5
             });
 
-            // Gran Total
+            // Gran Total desglosado
             doc.moveDown(1);
-            doc.font("Helvetica-Bold").fillColor(brandColor).fontSize(16).text(`TOTAL: $${total.toFixed(2)}`, { align: 'right' });
+            doc.font("Helvetica").fillColor('#444444').fontSize(11).text(`Subtotal: $${totalSubtotal.toFixed(2)}`, { align: 'right' });
+            doc.font("Helvetica").fillColor('#444444').fontSize(11).text(`I.V.A. Total: $${totalIva.toFixed(2)}`, { align: 'right' });
+            doc.moveDown(0.2);
+            doc.font("Helvetica-Bold").fillColor(brandColor).fontSize(16).text(`TOTAL NETO: $${totalGeneral.toFixed(2)}`, { align: 'right' });
 
             // Línea divisoria inferior
             doc.moveTo(50, doc.y + 20).lineTo(545, doc.y + 20).strokeColor('#e5e7eb').lineWidth(1).stroke();

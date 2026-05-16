@@ -45,7 +45,8 @@ function buildResultsPage(session) {
 
     let msj = `🔍 *Resultados de búsqueda* (${pageNum}/${totalPages} — ${total} encontrados):\n\n`;
     pageItems.forEach((r, i) => {
-        msj += `*${i + 1}.* ${r.DESCRIP} - $${r.PRECIO1.toFixed(2)}\n`;
+        const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
+        msj += `*${i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
     });
 
     if (hasMore) {
@@ -241,17 +242,23 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
             const cantidad = parseInt(textMessage, 10);
             if (!isNaN(cantidad) && cantidad > 0) {
                 const item = session.selectedItem;
+                const precioBase = item.PRECIO1;
+                const totalUnitario = item.IMPUESTO === 'IVA' ? Math.ceil(precioBase * 1.16) : precioBase;
+                const montoIva = totalUnitario - precioBase;
 
                 if (!dryRun) {
-                    await addItemToQuote(phone, item.ARTICULO, item.DESCRIP, item.PRECIO1, cantidad);
+                    await addItemToQuote(phone, item.ARTICULO, item.DESCRIP, cantidad, precioBase, montoIva, totalUnitario, item.IMPUESTO);
                 } else {
                     // Acumular ítems en memoria para poder generar el PDF de prueba
                     if (!session.simulatedQuote) session.simulatedQuote = [];
                     session.simulatedQuote.push({
                         articulo: item.ARTICULO,
                         descrip:  item.DESCRIP,
-                        precio:   item.PRECIO1,
-                        cantidad
+                        cantidad,
+                        precio_unitario: precioBase,
+                        monto_iva: montoIva,
+                        total_unitario: totalUnitario,
+                        impuesto: item.IMPUESTO
                     });
                 }
 
