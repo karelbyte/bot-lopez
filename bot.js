@@ -16,14 +16,34 @@ const botState = {
 const userSessions = {};
 
 function getSession(identifier) {
+    const now = Date.now();
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+
     if (!userSessions[identifier]) {
         userSessions[identifier] = {
-            state: 'IDLE',   // IDLE, ASKING_NAME, SELECTING_ITEM, ASKING_QUANTITY
-            allResults: [],  // todos los resultados de la búsqueda actual
-            searchPage: 0,   // página actual (0-based)
-            searchResults: [],// resultados de la página actual (los que ve el usuario)
-            selectedItem: null
+            state: 'IDLE',
+            allResults: [],
+            searchPage: 0,
+            searchResults: [],
+            selectedItem: null,
+            lastActivity: now
         };
+    } else {
+        // Verificar si la sesión expiró
+        if (now - userSessions[identifier].lastActivity > TWO_HOURS) {
+            console.log(`[SESSION] Sesión expirada para ${identifier}. Reiniciando...`);
+            userSessions[identifier] = {
+                state: 'IDLE',
+                allResults: [],
+                searchPage: 0,
+                searchResults: [],
+                selectedItem: null,
+                lastActivity: now
+            };
+        } else {
+            // Actualizar tiempo de actividad
+            userSessions[identifier].lastActivity = now;
+        }
     }
     return userSessions[identifier];
 }
@@ -209,6 +229,9 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
             } else {
                 session.simulatedQuote = [];
             }
+            
+            await handlePromotions('WELCOME');
+
             const returnWelcomeText = `¡Hola de nuevo, ${user.name}! 👋 Bienvenido a *Lopez Impresores*.
 🌐 https://lopezimpresores.mx/
 📞 (755) 554-2478 y 554-2578
@@ -282,6 +305,11 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                 const montoIva = totalUnitario - precioBase;
 
                 if (!dryRun) {
+                    // Si es el primer ítem que agrega, mostrar promo PRE_QUOTE
+                    const pending = await getPendingQuote(identifier);
+                    if (pending.length === 0) {
+                        await handlePromotions('PRE_QUOTE');
+                    }
                     await addItemToQuote(identifier, item.ARTICULO, item.DESCRIP, cantidad, precioBase, montoIva, totalUnitario, item.IMPUESTO);
                 } else {
                     // Acumular ítems en memoria para poder generar el PDF de prueba

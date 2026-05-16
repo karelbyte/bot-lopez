@@ -100,6 +100,51 @@
         .badge-postname { background: #fef3c7; color: #92400e; }
         .badge-prequote { background: #dcfce7; color: #166534; }
 
+        /* Estilos Editor WhatsApp */
+        .whatsapp-toolbar {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 5px;
+        }
+        .whatsapp-toolbar button {
+            padding: 5px 10px;
+            font-size: 12px;
+            background: #e5e7eb;
+            color: #374151;
+            border: 1px solid #d1d5db;
+        }
+        .whatsapp-toolbar button:hover { background: #d1d5db; }
+        
+        .preview-box {
+            margin-top: 10px;
+            padding: 15px;
+            background: #e5ddd5; /* Fondo clásico WhatsApp */
+            border-radius: 8px;
+            background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png');
+        }
+        .preview-label { font-size: 12px; font-weight: bold; color: #4b5563; margin-bottom: 8px; }
+        .whatsapp-bubble {
+            background: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 85%;
+            font-size: 14.5px;
+            line-height: 1.4;
+            position: relative;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .whatsapp-bubble::before {
+            content: "";
+            position: absolute;
+            top: 0; left: -8px;
+            width: 0; height: 0;
+            border-top: 0 solid transparent;
+            border-bottom: 10px solid transparent;
+            border-right: 10px solid white;
+        }
+
         .promo-text { font-size: 14px; margin: 10px 0; flex-grow: 1; }
         .promo-img { 
             width: 100%; 
@@ -137,7 +182,20 @@
         </div>
         <div class="form-group">
             <label>Texto de la Promoción</label>
-            <textarea id="promoText" rows="3" placeholder="Ej: ¡Aprovecha hoy 10% de descuento!"></textarea>
+            <div class="whatsapp-toolbar">
+                <button type="button" onclick="formatText('*')"><b>B</b></button>
+                <button type="button" onclick="formatText('_')"><i>I</i></button>
+                <button type="button" onclick="formatText('~')"><s>S</s></button>
+                <button type="button" onclick="formatText('```')"><code>M</code></button>
+                <button type="button" onclick="formatText('- ')">List</button>
+            </div>
+            <textarea id="promoText" rows="4" placeholder="Ej: ¡Aprovecha hoy *10%* de descuento!" oninput="updatePreview()"></textarea>
+            <div class="tip">💡 La previsualización muestra cómo se verá en WhatsApp.</div>
+        </div>
+        
+        <div class="preview-box">
+            <div class="preview-label">Previsualización:</div>
+            <div id="whatsappPreview" class="whatsapp-bubble"></div>
         </div>
         <div class="form-group">
             <label>Imagen de la Promoción (JPG/PNG)</label>
@@ -154,7 +212,7 @@
 </div>
 
 <script>
-    async function fetchPromos() {
+    async function fetchPromotions() {
         const res = await fetch('/api/promotions');
         const promos = await res.json();
         const container = document.getElementById('promoList');
@@ -164,21 +222,60 @@
             const card = document.createElement('div');
             card.className = `promo-card ${p.active ? '' : 'inactive'}`;
             
-            const badgeClass = `badge-${p.position.toLowerCase().replace('_', '')}`;
-            
+            const badgeClass = p.position === 'WELCOME' ? 'badge-welcome' : 
+                               (p.position === 'POST_NAME' ? 'badge-postname' : 'badge-prequote');
+            const badgeText = p.position === 'WELCOME' ? 'Bienvenida' : 
+                              (p.position === 'POST_NAME' ? 'Post-Nombre' : 'Pre-Cotización');
+
             card.innerHTML = `
-                <span class="promo-badge ${badgeClass}">${p.position}</span>
+                <span class="promo-badge ${badgeClass}">${badgeText}</span>
                 ${p.image_url ? `<img src="${p.image_url}" class="promo-img">` : ''}
-                <div class="promo-text">${p.text}</div>
+                <div class="promo-text">${p.text.replace(/\*(.*?)\*/g, '<b>$1</b>')}</div>
                 <div class="promo-actions">
-                    <button class="secondary" onclick="togglePromo(${p.id}, ${p.active ? 0 : 1})">
-                        ${p.active ? 'Desactivar' : 'Activar'}
+                    <button class="${p.active ? 'secondary' : 'success'}" onclick="togglePromo(${p.id}, ${p.active})">
+                        ${p.active ? 'Pausar' : 'Activar'}
                     </button>
                     <button class="danger" onclick="deletePromo(${p.id})">Eliminar</button>
                 </div>
             `;
             container.appendChild(card);
         });
+    }
+
+    // Funciones del Editor WhatsApp
+    function formatText(symbol) {
+        const textarea = document.getElementById('promoText');
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const text = textarea.value;
+        const selected = text.substring(start, end);
+
+        if (symbol === '- ') {
+            const before = text.substring(0, start);
+            const after = text.substring(end);
+            textarea.value = before + "\n- " + selected + after;
+        } else {
+            const before = text.substring(0, start);
+            const after = text.substring(end);
+            textarea.value = before + symbol + selected + symbol + after;
+        }
+        
+        textarea.focus();
+        updatePreview();
+    }
+
+    function updatePreview() {
+        const text = document.getElementById('promoText').value;
+        const preview = document.getElementById('whatsappPreview');
+        
+        let html = text
+            .replace(/\*(.*?)\*/g, '<b>$1</b>')
+            .replace(/_(.*?)_/g, '<i>$1</i>')
+            .replace(/~(.*?)~/g, '<s>$1</s>')
+            .replace(/```(.*?)```/gs, '<code>$1</code>')
+            .replace(/^- (.*$)/gm, '• $1');
+
+        preview.innerHTML = html || '<span style="color:#999">Escribe algo para previsualizar...</span>';
     }
 
     async function addPromo() {
@@ -201,7 +298,7 @@
         if (res.ok) {
             document.getElementById('promoText').value = '';
             document.getElementById('imageFile').value = '';
-            fetchPromos();
+            fetchPromotions();
         }
     }
 
@@ -211,16 +308,16 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ active })
         });
-        fetchPromos();
+        fetchPromotions();
     }
 
     async function deletePromo(id) {
         if (!confirm('¿Seguro que quieres eliminar esta promoción?')) return;
         await fetch(`/api/promotions/${id}`, { method: 'DELETE' });
-        fetchPromos();
+        fetchPromotions();
     }
 
-    fetchPromos();
+    fetchPromotions();
 </script>
 
 </body>
