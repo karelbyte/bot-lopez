@@ -3,7 +3,7 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido } = require('./db.js');
-const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions } = require('./localDb.js');
+const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
 
 const botState = {
@@ -151,7 +151,6 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
 
         // Finalizar cotización
         if (['terminar', 'fin', 'cotizar'].includes(textLower)) {
-            // En dryRun los ítems están en memoria
             const pending = dryRun
                 ? (session.simulatedQuote || [])
                 : await getPendingQuote(identifier);
@@ -165,43 +164,38 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
 
             try {
                 let pedidoId = null;
+
                 if (!dryRun) {
                     try {
                         pedidoId = await createSqlPedido(pending, user.name);
                     } catch (sqlErr) {
-                        console.error('Error al registrar pedido en SQL:', sqlErr);
+                        console.warn('⚠️ MS SQL offline al finalizar cotización. Se sincronizará después.', sqlErr.message);
+                        await saveLog('WARN', 'bot', `MS SQL offline al finalizar cotización de ${user.name}`, sqlErr);
                     }
+
+                    // Finalizar en SQLite — synced=1 si se creó en SQL, synced=0 si no
+                    await finalizeQuote(identifier, pedidoId);
+                } else {
+                    session.simulatedQuote = [];
                 }
 
                 const pdfPath = await generateQuotePdf(user, pending, pedidoId);
-                
+
                 let orderMsg = `¡Listo, ${user.name}! Aquí tienes tu cotización en PDF.\n\n¡Gracias por cotizar con nosotros!`;
-
                 if (pedidoId) {
-                    orderMsg += `\n\n✅ Se ha generado la cotización oficial en nuestro sistema con el número: *${pedidoId}*`;
-                }
-
-                if (!dryRun) {
-                    await finalizeQuote(identifier, pedidoId);
+                    orderMsg += `\n\n✅ Cotización registrada en nuestro sistema con el número: *${pedidoId}*`;
                 }
 
                 replyPdf(pdfPath, orderMsg);
 
-                // Limpiar estado de la sesión
-                delete session.state;
-                delete session.selectedItem;
-                if (dryRun) delete session.simulatedQuote;
             } catch (err) {
                 console.error('Error generando PDF:', err);
+                await saveLog('ERROR', 'pdf', `Error generando PDF para ${user.name}`, err);
                 reply('Hubo un error al generar el PDF. Por favor intenta de nuevo.');
             }
 
-            if (!dryRun) {
-                await finalizeQuote(identifier);
-            } else {
-                session.simulatedQuote = [];
-            }
             session.state = 'IDLE';
+            session.selectedItem = null;
             return responses;
         }
 
@@ -336,6 +330,7 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
 
     } catch (error) {
         console.error('Error en el flujo del bot:', error);
+        await saveLog('ERROR', 'bot', `Error en flujo para ${identifier}: ${error.message}`, error);
         reply('Ocurrió un error al procesar tu solicitud. Por favor intenta más tarde.');
     }
 

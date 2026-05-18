@@ -4,7 +4,8 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const { startBot, botState, processMessage, userSessions, sendBroadcast } = require('./bot.js');
-const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign } = require('./localDb.js');
+const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, getLogs, clearLogs } = require('./localDb.js');
+const { startSyncTask } = require('./syncTask.js');
 const multer = require('multer');
 
 const storage = multer.diskStorage({
@@ -386,6 +387,35 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
     }
 });
 
+// ─── Logs ─────────────────────────────────────────────────────────────────────
+app.get('/logs', (_req, res) => {
+    res.sendFile(path.join(__dirname, 'logs.html'));
+});
+
+app.get('/api/logs', async (req, res) => {
+    try {
+        const { level, source, limit } = req.query;
+        const logs = await getLogs({
+            level: level || null,
+            source: source || null,
+            limit: limit ? parseInt(limit) : 200
+        });
+        res.json(logs);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/logs', async (req, res) => {
+    try {
+        const days = req.query.days ? parseInt(req.query.days) : 30;
+        await clearLogs(days);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Servir logo para el simulador
 app.use('/logo.png', express.static(path.join(__dirname, 'logo.png')));
 app.use('/logo.jpg', express.static(path.join(__dirname, 'logo.jpg')));
@@ -398,6 +428,7 @@ app.listen(PORT, () => {
 
 startBot().then(sock => {
     botSock = sock;
+    startSyncTask(); // Iniciar tarea de sincronización con MS SQL
 }).catch(err => {
     console.error('Error iniciando el bot:', err);
 });

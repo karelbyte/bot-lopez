@@ -1,5 +1,6 @@
 require('dotenv').config();
 const sql = require('mssql');
+const { saveLog } = require('./localDb.js');
 
 const dbConfig = {
     user: process.env.DB_USER,
@@ -33,6 +34,8 @@ async function connectToDatabase() {
     } catch (err) {
         console.error('❌ Error al conectar a la base de datos:', err);
         poolPromise = null;
+        // saveLog sin await para no bloquear — y evitar dependencia circular en el arranque
+        saveLog('ERROR', 'db', 'Error de conexión a MS SQL', err).catch(() => {});
         throw err;
     }
 }

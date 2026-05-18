@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs | Lopez Impresores</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f3f4f6;
+            color: #1f2937;
+            min-height: 100vh;
+        }
+        .topbar {
+            background: #9F1C87;
+            color: white;
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .topbar h1 { font-size: 18px; font-weight: 700; }
+        .topbar a {
+            color: white;
+            text-decoration: none;
+            font-size: 13px;
+            opacity: 0.85;
+        }
+        .topbar a:hover { opacity: 1; }
+
+        .main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .toolbar select, .toolbar button {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+            cursor: pointer;
+        }
+        .toolbar select { background: white; }
+        .toolbar button {
+            background: #9F1C87;
+            color: white;
+            border-color: #9F1C87;
+            font-weight: 600;
+        }
+        .toolbar button:hover { background: #7a1568; }
+        .toolbar .btn-danger {
+            background: #dc2626;
+            border-color: #dc2626;
+        }
+        .toolbar .btn-danger:hover { background: #b91c1c; }
+        .toolbar .btn-secondary {
+            background: #6b7280;
+            border-color: #6b7280;
+        }
+        .toolbar .btn-secondary:hover { background: #4b5563; }
+
+        .stats {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 12px 20px;
+            border-left: 4px solid #e5e7eb;
+            min-width: 120px;
+        }
+        .stat-card.error { border-color: #dc2626; }
+        .stat-card.warn  { border-color: #f59e0b; }
+        .stat-card.info  { border-color: #3b82f6; }
+        .stat-card .num  { font-size: 24px; font-weight: 700; }
+        .stat-card .lbl  { font-size: 12px; color: #6b7280; margin-top: 2px; }
+
+        .log-table-wrap {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        thead th {
+            background: #f9fafb;
+            padding: 10px 14px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        tbody tr { border-bottom: 1px solid #f3f4f6; }
+        tbody tr:hover { background: #fafafa; }
+        tbody td { padding: 10px 14px; vertical-align: top; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge-ERROR { background: #fee2e2; color: #dc2626; }
+        .badge-WARN  { background: #fef3c7; color: #d97706; }
+        .badge-INFO  { background: #dbeafe; color: #2563eb; }
+
+        .source-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .detail-cell {
+            max-width: 400px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: monospace;
+            font-size: 11px;
+            color: #6b7280;
+            max-height: 60px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        .detail-cell.expanded { max-height: none; }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #9ca3af;
+        }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+        .refresh-info {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-left: auto;
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <h1>📋 Logs del Sistema</h1>
+    <a href="/">← Volver al Panel</a>
+</div>
+
+<div class="main">
+
+    <div class="stats">
+        <div class="stat-card error">
+            <div class="num" id="count-error">—</div>
+            <div class="lbl">Errores</div>
+        </div>
+        <div class="stat-card warn">
+            <div class="num" id="count-warn">—</div>
+            <div class="lbl">Advertencias</div>
+        </div>
+        <div class="stat-card info">
+            <div class="num" id="count-info">—</div>
+            <div class="lbl">Info</div>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <select id="filterLevel">
+            <option value="">Todos los niveles</option>
+            <option value="ERROR">ERROR</option>
+            <option value="WARN">WARN</option>
+            <option value="INFO">INFO</option>
+        </select>
+        <select id="filterSource">
+            <option value="">Todas las fuentes</option>
+            <option value="bot">bot</option>
+            <option value="sync">sync</option>
+            <option value="db">db</option>
+            <option value="pdf">pdf</option>
+            <option value="system">system</option>
+        </select>
+        <button onclick="loadLogs()">🔄 Actualizar</button>
+        <button class="btn-danger" onclick="confirmClear()">🗑️ Limpiar logs (+30 días)</button>
+        <span class="refresh-info" id="last-update"></span>
+    </div>
+
+    <div class="log-table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:160px">Fecha</th>
+                    <th style="width:80px">Nivel</th>
+                    <th style="width:80px">Fuente</th>
+                    <th>Mensaje</th>
+                    <th>Detalle</th>
+                </tr>
+            </thead>
+            <tbody id="log-body">
+                <tr><td colspan="5" class="empty-state"><div class="icon">⏳</div>Cargando...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+    var allLogs = [];
+
+    function formatDate(str) {
+        if (!str) return '—';
+        var d = new Date(str);
+        return d.toLocaleDateString('es-MX') + ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function renderLogs(logs) {
+        var tbody = document.getElementById('log-body');
+        if (logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><div class="icon">✅</div>No hay logs con los filtros seleccionados.</div></td></tr>';
+            return;
+        }
+
+        var html = '';
+        logs.forEach(function(log) {
+            var detail = log.detail ? log.detail.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+            html += '<tr>';
+            html += '<td style="white-space:nowrap;color:#6b7280">' + formatDate(log.created_at) + '</td>';
+            html += '<td><span class="badge badge-' + log.level + '">' + log.level + '</span></td>';
+            html += '<td><span class="source-badge">' + log.source + '</span></td>';
+            html += '<td>' + (log.message || '').replace(/</g, '&lt;') + '</td>';
+            html += '<td><div class="detail-cell" onclick="this.classList.toggle(\'expanded\')">' + detail + '</div></td>';
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+    }
+
+    function updateStats(logs) {
+        var errors = logs.filter(function(l) { return l.level === 'ERROR'; }).length;
+        var warns  = logs.filter(function(l) { return l.level === 'WARN'; }).length;
+        var infos  = logs.filter(function(l) { return l.level === 'INFO'; }).length;
+        document.getElementById('count-error').textContent = errors;
+        document.getElementById('count-warn').textContent  = warns;
+        document.getElementById('count-info').textContent  = infos;
+    }
+
+    async function loadLogs() {
+        var level  = document.getElementById('filterLevel').value;
+        var source = document.getElementById('filterSource').value;
+        var url = '/api/logs?limit=500';
+        if (level)  url += '&level='  + level;
+        if (source) url += '&source=' + source;
+
+        try {
+            var res = await fetch(url);
+            allLogs = await res.json();
+            renderLogs(allLogs);
+            updateStats(allLogs);
+            document.getElementById('last-update').textContent = 'Actualizado: ' + new Date().toLocaleTimeString('es-MX');
+        } catch (err) {
+            document.getElementById('log-body').innerHTML = '<tr><td colspan="5" style="color:red;padding:20px">Error al cargar logs: ' + err.message + '</td></tr>';
+        }
+    }
+
+    async function confirmClear() {
+        if (!confirm('¿Eliminar todos los logs con más de 30 días?')) return;
+        try {
+            await fetch('/api/logs?days=30', { method: 'DELETE' });
+            loadLogs();
+        } catch (err) {
+            alert('Error al limpiar logs: ' + err.message);
+        }
+    }
+
+    document.getElementById('filterLevel').addEventListener('change', loadLogs);
+    document.getElementById('filterSource').addEventListener('change', loadLogs);
+
+    // Cargar al iniciar y auto-refrescar cada 30 segundos
+    loadLogs();
+    setInterval(loadLogs, 30000);
+</script>
+</body>
+</html>

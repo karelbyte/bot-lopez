@@ -25,7 +25,8 @@ async function getLocalDb() {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     client_phone TEXT,
                     sql_pedido_id INTEGER,
-                    status TEXT DEFAULT 'pending', -- pending, finalized
+                    status TEXT DEFAULT 'pending',
+                    synced INTEGER DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (client_phone) REFERENCES clients(phone)
                 );
@@ -48,7 +49,7 @@ async function getLocalDb() {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     text TEXT,
                     image_url TEXT,
-                    position TEXT, -- WELCOME, POST_NAME, PRE_QUOTE
+                    position TEXT,
                     active INTEGER DEFAULT 1,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
@@ -59,7 +60,34 @@ async function getLocalDb() {
                     image_url TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    level TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    detail TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
             `);
+
+            // Migraciones: agregar columnas nuevas a tablas existentes si no existen
+            const migrations = [
+                "ALTER TABLE quotes ADD COLUMN synced INTEGER DEFAULT 0",
+                "ALTER TABLE quotes ADD COLUMN sql_pedido_id INTEGER",
+                "ALTER TABLE quote_details ADD COLUMN cantidad INTEGER",
+                "ALTER TABLE quote_details ADD COLUMN precio_unitario REAL",
+                "ALTER TABLE quote_details ADD COLUMN monto_iva REAL",
+                "ALTER TABLE quote_details ADD COLUMN total_unitario REAL",
+                "ALTER TABLE quote_details ADD COLUMN impuesto TEXT",
+            ];
+            for (const migration of migrations) {
+                try {
+                    await db.exec(migration);
+                } catch (e) {
+                    // Ignorar error "duplicate column" — significa que ya existe
+                }
+            }
 
             return db;
         });
@@ -134,9 +162,41 @@ async function clearPendingQuote(phone) {
 }
 
 // Finalizar la cotización (Cambia estado de la cabecera y guarda el ID de SQL)
-async function finalizeQuote(phone, sqlPedidoId) {
+async function finalizeQuote(phone, sqlPedidoId = null) {
     const db = await getLocalDb();
-    await db.run('UPDATE quotes SET status = "finalized", sql_pedido_id = ? WHERE client_phone = ? AND status = "pending"', [sqlPedidoId, phone]);
+    const synced = sqlPedidoId ? 1 : 0;
+    await db.run(
+        'UPDATE quotes SET status = "finalized", sql_pedido_id = ?, synced = ? WHERE client_phone = ? AND status = "pending"',
+        [sqlPedidoId, synced, phone]
+    );
+}
+
+// Obtener cotizaciones finalizadas que no se pudieron sincronizar con MS SQL
+async function getUnsyncedQuotes() {
+    const db = await getLocalDb();
+    return db.all(`
+        SELECT q.id, q.client_phone, q.created_at,
+               c.name as client_name
+        FROM quotes q
+        JOIN clients c ON c.phone = q.client_phone
+        WHERE q.status = 'finalized' AND q.synced = 0
+        ORDER BY q.created_at ASC
+    `);
+}
+
+// Obtener detalles de una cotización por su ID
+async function getQuoteDetailsById(quoteId) {
+    const db = await getLocalDb();
+    return db.all('SELECT * FROM quote_details WHERE quote_id = ?', [quoteId]);
+}
+
+// Marcar una cotización como sincronizada con MS SQL
+async function markQuoteSynced(quoteId, sqlPedidoId) {
+    const db = await getLocalDb();
+    await db.run(
+        'UPDATE quotes SET synced = 1, sql_pedido_id = ? WHERE id = ?',
+        [sqlPedidoId, quoteId]
+    );
 }
 
 // ========================
@@ -227,6 +287,45 @@ async function getAnalyticsStats() {
     };
 }
 
+// ========================
+// Módulo de Logs
+// ========================
+
+async function saveLog(level, source, message, detail = null) {
+    try {
+        const db = await getLocalDb();
+        const detailStr = detail instanceof Error
+            ? (detail.stack || detail.message)
+            : (detail ? String(detail) : null);
+        await db.run(
+            'INSERT INTO logs (level, source, message, detail) VALUES (?, ?, ?, ?)',
+            [level, source, message, detailStr]
+        );
+    } catch (err) {
+        // Fallback a consola si SQLite falla para no crear loop
+        console.error('[LOG-SAVE-ERROR]', err.message);
+    }
+}
+
+async function getLogs({ level, source, limit = 200 } = {}) {
+    const db = await getLocalDb();
+    let query = 'SELECT * FROM logs WHERE 1=1';
+    const params = [];
+    if (level) { query += ' AND level = ?'; params.push(level); }
+    if (source) { query += ' AND source = ?'; params.push(source); }
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(limit);
+    return db.all(query, params);
+}
+
+async function clearLogs(olderThanDays = 30) {
+    const db = await getLocalDb();
+    await db.run(
+        "DELETE FROM logs WHERE created_at < datetime('now', ?)",
+        [`-${olderThanDays} days`]
+    );
+}
+
 module.exports = {
     getLocalDb,
     getUser,
@@ -236,6 +335,9 @@ module.exports = {
     getPendingQuote,
     clearPendingQuote,
     finalizeQuote,
+    getUnsyncedQuotes,
+    getQuoteDetailsById,
+    markQuoteSynced,
     getActivePromotions,
     getAllPromotions,
     addPromotion,
@@ -245,5 +347,8 @@ module.exports = {
     getAllClients,
     addCampaign,
     getAllCampaigns,
-    deleteCampaign
+    deleteCampaign,
+    saveLog,
+    getLogs,
+    clearLogs
 };
