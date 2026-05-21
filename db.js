@@ -1,6 +1,6 @@
 require('dotenv').config();
 const sql = require('mssql');
-const { saveLog } = require('./localDb.js');
+const { saveLog, searchProductsLocal } = require('./localDb.js');
 
 const dbConfig = {
     user: process.env.DB_USER,
@@ -54,28 +54,24 @@ async function query(queryString) {
 async function searchProducts(searchTerm) {
     try {
         const pool = await connectToDatabase();
-
-        // Dividir en palabras y filtrar vacíos
         const words = searchTerm.trim().split(/\s+/).filter(w => w.length > 0);
-
-        // Construir un AND LIKE por cada palabra
         const request = pool.request();
         const conditions = words.map((word, i) => {
             request.input(`term${i}`, sql.VarChar, `%${word}%`);
             return `[DESCRIP] LIKE @term${i} COLLATE Latin1_General_CI_AI`;
         });
-
         const result = await request.query(`
             SELECT [ARTICULO], [DESCRIP], [PRECIO1], [IMPUESTO]
             FROM prods
             WHERE ${conditions.join(' AND ')}
             ORDER BY [DESCRIP]
         `);
-
         return result.recordset;
     } catch (err) {
-        console.error('Error en searchProducts:', err);
-        throw err;
+        // MS SQL offline — usar caché local de SQLite
+        console.warn('[DB] MS SQL no disponible para búsqueda, usando caché local.');
+        await saveLog('WARN', 'db', `MS SQL offline en búsqueda "${searchTerm}", usando caché local`, err).catch(() => {});
+        return searchProductsLocal(searchTerm);
     }
 }
 

@@ -175,6 +175,22 @@
         <span class="btn-main">Ver Logs</span>
     </a>
 
+    <!-- Card: Cotizaciones -->
+    <a href="/quotes" class="hub-card">
+        <div class="icon">📄</div>
+        <h2>Cotizaciones</h2>
+        <p>Consulta el historial de cotizaciones con detalle de productos y estado de sincronización.</p>
+        <span class="btn-main">Ver Historial</span>
+    </a>
+
+    <!-- Card: Sync Manual -->
+    <div class="hub-card" onclick="openSyncModal()" style="cursor:pointer">
+        <div class="icon">🔄</div>
+        <h2>Sincronizar Catálogo</h2>
+        <p>Actualiza manualmente el catálogo de productos desde MS SQL a la caché local.</p>
+        <span class="btn-main">Sincronizar ahora</span>
+    </div>
+
     <!-- Card: Campañas 
     <a href="/campaigns" class="hub-card">
         <div class="icon">🚀</div>
@@ -182,6 +198,23 @@
         <p>Envía mensajes masivos y promociones a todos tus clientes.</p>
         <span class="btn-main">Difusión</span>
     </a>-->
+</div>
+
+<!-- Modal de confirmación de sync -->
+<div id="sync-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+    <div style="background:white; border-radius:16px; padding:32px; max-width:420px; width:90%; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+        <div style="font-size:48px; margin-bottom:16px;">🔄</div>
+        <h2 style="color:#9F1C87; margin:0 0 12px 0; font-size:20px;">Sincronizar Catálogo</h2>
+        <p style="color:#6b7280; font-size:14px; line-height:1.6; margin-bottom:24px;">
+            Esto actualizará el catálogo local de productos con los datos más recientes de MS SQL.<br><br>
+            <strong>¿Confirmas la sincronización?</strong>
+        </p>
+        <div style="display:flex; gap:12px; justify-content:center;">
+            <button onclick="closeSyncModal()" style="padding:10px 24px; border-radius:8px; border:1px solid #d1d5db; background:white; color:#374151; font-size:14px; font-weight:600; cursor:pointer;">Cancelar</button>
+            <button onclick="runSync()" id="sync-confirm-btn" style="padding:10px 24px; border-radius:8px; border:none; background:#9F1C87; color:white; font-size:14px; font-weight:600; cursor:pointer;">Sincronizar</button>
+        </div>
+        <div id="sync-result" style="margin-top:16px; font-size:13px; display:none;"></div>
+    </div>
 </div>
 
 <script>
@@ -206,6 +239,48 @@
 
     setInterval(updateStatus, 5000);
     updateStatus();
+
+    function openSyncModal() {
+        document.getElementById('sync-result').style.display = 'none';
+        document.getElementById('sync-result').textContent = '';
+        document.getElementById('sync-confirm-btn').disabled = false;
+        document.getElementById('sync-confirm-btn').textContent = 'Sincronizar';
+        document.getElementById('sync-modal').style.display = 'flex';
+    }
+
+    function closeSyncModal() {
+        document.getElementById('sync-modal').style.display = 'none';
+    }
+
+    async function runSync() {
+        const btn = document.getElementById('sync-confirm-btn');
+        const result = document.getElementById('sync-result');
+        btn.disabled = true;
+        btn.textContent = '⏳ Sincronizando...';
+        result.style.display = 'none';
+
+        try {
+            const res = await fetch('/api/sync/products', { method: 'POST' });
+            const data = await res.json();
+            result.style.display = 'block';
+            result.style.color = data.ok ? '#166534' : '#dc2626';
+            result.innerHTML = data.ok
+                ? '✅ ' + data.message + ' <a href="/logs" style="color:#9F1C87;font-weight:600;margin-left:8px;">Ver Logs →</a>'
+                : '❌ ' + data.error;
+            btn.textContent = 'Listo';
+        } catch (err) {
+            result.style.display = 'block';
+            result.style.color = '#dc2626';
+            result.textContent = '❌ Error de conexión: ' + err.message;
+            btn.textContent = 'Reintentar';
+            btn.disabled = false;
+        }
+    }
+
+    // Cerrar modal al hacer clic fuera
+    document.getElementById('sync-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeSyncModal();
+    });
 </script>
 
 </body>

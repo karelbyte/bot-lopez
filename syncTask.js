@@ -1,13 +1,14 @@
 /**
  * syncTask.js
- * Tarea periódica que sincroniza cotizaciones pendientes con MS SQL.
- * Se ejecuta cada 5 minutos. Si MS SQL está offline, espera al siguiente ciclo.
+ * - Sincroniza cotizaciones pendientes con MS SQL cada 5 minutos.
+ * - Sincroniza el catálogo de productos de MS SQL → SQLite todos los días a las 10:00 AM.
  */
 
 const { createSqlPedido, connectToDatabase } = require('./db.js');
-const { getUnsyncedQuotes, getQuoteDetailsById, markQuoteSynced, saveLog } = require('./localDb.js');
+const { getUnsyncedQuotes, getQuoteDetailsById, markQuoteSynced, saveLog, upsertProducts, getProductsCount } = require('./localDb.js');
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutos
+const PRODUCT_SYNC_HOUR = 10;            // 10:00 AM
 
 async function isSqlOnline() {
     try {
@@ -18,6 +19,7 @@ async function isSqlOnline() {
     }
 }
 
+// ─── Sync de cotizaciones pendientes ─────────────────────────────────────────
 async function syncPendingQuotes() {
     try {
         const online = await isSqlOnline();
@@ -27,10 +29,7 @@ async function syncPendingQuotes() {
         }
 
         const unsyncedQuotes = await getUnsyncedQuotes();
-
-        if (unsyncedQuotes.length === 0) {
-            return; // Nada que sincronizar
-        }
+        if (unsyncedQuotes.length === 0) return;
 
         console.log(`[SYNC] ${unsyncedQuotes.length} cotización(es) pendiente(s) de sincronizar.`);
 
@@ -58,18 +57,80 @@ async function syncPendingQuotes() {
 
     } catch (err) {
         console.error('[SYNC] Error general en syncPendingQuotes:', err.message);
-        await saveLog('ERROR', 'sync', 'Error general en tarea de sincronización', err);
+        await saveLog('ERROR', 'sync', 'Error general en tarea de sincronización de cotizaciones', err);
     }
 }
 
-function startSyncTask() {
-    console.log(`[SYNC] Tarea de sincronización iniciada (cada ${SYNC_INTERVAL_MS / 60000} minutos).`);
+// ─── Sync de catálogo de productos ───────────────────────────────────────────
+async function syncProducts() {
+    console.log('[PRODUCTS] Iniciando sincronización de catálogo desde MS SQL...');
+    try {
+        const online = await isSqlOnline();
+        if (!online) {
+            console.warn('[PRODUCTS] MS SQL offline. No se puede sincronizar catálogo.');
+            await saveLog('WARN', 'sync', 'Sync de productos omitida: MS SQL offline');
+            return;
+        }
 
-    // Ejecutar una vez al arrancar (por si quedaron pendientes de sesiones anteriores)
-    syncPendingQuotes();
+        const pool = await connectToDatabase();
+        const result = await pool.request().query(`
+            SELECT [ARTICULO], [DESCRIP], [PRECIO1], [IMPUESTO]
+            FROM prods
+            ORDER BY [DESCRIP]
+        `);
 
-    // Luego cada 5 minutos
-    setInterval(syncPendingQuotes, SYNC_INTERVAL_MS);
+        const products = result.recordset;
+        if (products.length === 0) {
+            await saveLog('WARN', 'sync', 'Sync de productos: MS SQL devolvió 0 productos');
+            return;
+        }
+
+        await upsertProducts(products);
+
+        const total = await getProductsCount();
+        const msg = `Catálogo sincronizado: ${products.length} productos procesados (${total} en caché local)`;
+        console.log(`[PRODUCTS] ✅ ${msg}`);
+        await saveLog('INFO', 'sync', msg);
+
+    } catch (err) {
+        console.error('[PRODUCTS] ❌ Error sincronizando catálogo:', err.message);
+        await saveLog('ERROR', 'sync', 'Error en sincronización de catálogo de productos', err);
+    }
 }
 
-module.exports = { startSyncTask, syncPendingQuotes };
+// ─── Scheduler diario a las 10:00 AM ─────────────────────────────────────────
+function scheduleProductSync() {
+    function msUntilNextRun() {
+        const now = new Date();
+        const next = new Date();
+        next.setHours(PRODUCT_SYNC_HOUR, 0, 0, 0);
+        if (next <= now) {
+            next.setDate(next.getDate() + 1); // Si ya pasó hoy, programar para mañana
+        }
+        return next - now;
+    }
+
+    function scheduleNext() {
+        const ms = msUntilNextRun();
+        const nextRun = new Date(Date.now() + ms);
+        console.log(`[PRODUCTS] Próxima sincronización de catálogo: ${nextRun.toLocaleString('es-MX')}`);
+        setTimeout(async () => {
+            await syncProducts();
+            scheduleNext(); // Reprogramar para el día siguiente
+        }, ms);
+    }
+
+    scheduleNext();
+}
+
+// ─── Arranque ─────────────────────────────────────────────────────────────────
+function startSyncTask() {
+    console.log(`[SYNC] Tarea de cotizaciones iniciada (cada ${SYNC_INTERVAL_MS / 60000} minutos).`);
+    syncPendingQuotes();
+    setInterval(syncPendingQuotes, SYNC_INTERVAL_MS);
+
+    // Programar sync de productos a las 10:00 AM diario
+    scheduleProductSync();
+}
+
+module.exports = { startSyncTask, syncPendingQuotes, syncProducts };

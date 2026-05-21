@@ -69,6 +69,14 @@ async function getLocalDb() {
                     detail TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS products (
+                    articulo TEXT PRIMARY KEY,
+                    descrip TEXT NOT NULL,
+                    precio1 REAL NOT NULL,
+                    impuesto TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
             `);
 
             // Migraciones: agregar columnas nuevas a tablas existentes si no existen
@@ -169,6 +177,19 @@ async function finalizeQuote(phone, sqlPedidoId = null) {
         'UPDATE quotes SET status = "finalized", sql_pedido_id = ?, synced = ? WHERE client_phone = ? AND status = "pending"',
         [sqlPedidoId, synced, phone]
     );
+}
+
+// Obtener todas las cotizaciones finalizadas con datos del cliente
+async function getAllQuotes() {
+    const db = await getLocalDb();
+    return db.all(`
+        SELECT q.id, q.status, q.synced, q.sql_pedido_id, q.created_at,
+               c.name as client_name, c.phone as client_phone
+        FROM quotes q
+        JOIN clients c ON c.phone = q.client_phone
+        WHERE q.status = 'finalized'
+        ORDER BY q.created_at DESC
+    `);
 }
 
 // Obtener cotizaciones finalizadas que no se pudieron sincronizar con MS SQL
@@ -288,6 +309,45 @@ async function getAnalyticsStats() {
 }
 
 // ========================
+// Módulo de Productos (caché local)
+// ========================
+
+async function upsertProducts(products) {
+    const db = await getLocalDb();
+    const stmt = await db.prepare(
+        `INSERT INTO products (articulo, descrip, precio1, impuesto, updated_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(articulo) DO UPDATE SET
+             descrip    = excluded.descrip,
+             precio1    = excluded.precio1,
+             impuesto   = excluded.impuesto,
+             updated_at = CURRENT_TIMESTAMP`
+    );
+    for (const p of products) {
+        await stmt.run(p.ARTICULO, p.DESCRIP, p.PRECIO1, p.IMPUESTO || null);
+    }
+    await stmt.finalize();
+}
+
+async function searchProductsLocal(searchTerm) {
+    const db = await getLocalDb();
+    const words = searchTerm.trim().split(/\s+/).filter(w => w.length > 0);
+    const conditions = words.map(() => 'descrip LIKE ?').join(' AND ');
+    const params = words.map(w => `%${w}%`);
+    return db.all(
+        `SELECT articulo as ARTICULO, descrip as DESCRIP, precio1 as PRECIO1, impuesto as IMPUESTO
+         FROM products WHERE ${conditions} ORDER BY descrip`,
+        params
+    );
+}
+
+async function getProductsCount() {
+    const db = await getLocalDb();
+    const row = await db.get('SELECT COUNT(*) as count FROM products');
+    return row ? row.count : 0;
+}
+
+// ========================
 // Módulo de Logs
 // ========================
 
@@ -335,6 +395,7 @@ module.exports = {
     getPendingQuote,
     clearPendingQuote,
     finalizeQuote,
+    getAllQuotes,
     getUnsyncedQuotes,
     getQuoteDetailsById,
     markQuoteSynced,
@@ -348,6 +409,9 @@ module.exports = {
     addCampaign,
     getAllCampaigns,
     deleteCampaign,
+    upsertProducts,
+    searchProductsLocal,
+    getProductsCount,
     saveLog,
     getLogs,
     clearLogs

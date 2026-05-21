@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotizaciones | Lopez Impresores</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f3f4f6;
+            color: #1f2937;
+            min-height: 100vh;
+        }
+        .topbar {
+            background: #9F1C87;
+            color: white;
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .topbar h1 { font-size: 18px; font-weight: 700; }
+        .topbar a { color: white; text-decoration: none; font-size: 13px; opacity: 0.85; }
+        .topbar a:hover { opacity: 1; }
+
+        .main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .toolbar input {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+            width: 260px;
+            background: white;
+        }
+        .toolbar input:focus { outline: none; border-color: #9F1C87; }
+        .count-info { font-size: 13px; color: #6b7280; margin-left: auto; }
+
+        .table-wrap {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        thead th {
+            background: #f9fafb;
+            padding: 10px 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        tbody tr { border-bottom: 1px solid #f3f4f6; transition: background 0.15s; }
+        tbody tr:hover { background: #fdf4ff; }
+        tbody td { padding: 12px 16px; vertical-align: middle; }
+
+        .badge-synced   { background: #dcfce7; color: #166534; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+        .badge-unsynced { background: #fef3c7; color: #d97706; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+
+        .btn-detail {
+            background: #9F1C87;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+        }
+        .btn-detail:hover { background: #7a1568; }
+
+        .empty-state { text-align: center; padding: 60px; color: #9ca3af; }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: white;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 700px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal-header {
+            background: #9F1C87;
+            color: white;
+            padding: 18px 24px;
+            border-radius: 16px 16px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h2 { font-size: 16px; font-weight: 700; }
+        .modal-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 22px;
+            cursor: pointer;
+            line-height: 1;
+            opacity: 0.8;
+        }
+        .modal-close:hover { opacity: 1; }
+        .modal-body { padding: 24px; }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .info-item label { font-size: 11px; color: #6b7280; font-weight: 600; text-transform: uppercase; display: block; margin-bottom: 3px; }
+        .info-item span  { font-size: 14px; color: #1f2937; font-weight: 500; }
+
+        .detail-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .detail-table th {
+            background: #f9fafb;
+            padding: 8px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .detail-table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; }
+        .detail-table tfoot td {
+            padding: 12px;
+            font-weight: 700;
+            font-size: 15px;
+            color: #9F1C87;
+            border-top: 2px solid #e5e7eb;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <h1>📄 Cotizaciones</h1>
+    <a href="/">← Volver al Panel</a>
+</div>
+
+<div class="main">
+    <div class="toolbar">
+        <input type="text" id="search" placeholder="🔍 Buscar por cliente o teléfono..." oninput="filterQuotes()">
+        <span class="count-info" id="count-info"></span>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Cliente</th>
+                    <th>Teléfono</th>
+                    <th>Fecha</th>
+                    <th>Pedido SQL</th>
+                    <th>Estado</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="quotes-body">
+                <tr><td colspan="7"><div class="empty-state"><div class="icon">⏳</div>Cargando...</div></td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal de detalle -->
+<div class="modal-overlay" id="modal-overlay" onclick="handleOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="modal-title">Detalle de Cotización</h2>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body" id="modal-body">
+            Cargando...
+        </div>
+    </div>
+</div>
+
+<script>
+    var allQuotes = [];
+
+    function formatDate(str) {
+        if (!str) return '—';
+        var d = new Date(str);
+        return d.toLocaleDateString('es-MX') + ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatPhone(phone) {
+        return phone ? phone.replace('@s.whatsapp.net', '').replace('@c.us', '') : '—';
+    }
+
+    function renderQuotes(quotes) {
+        var tbody = document.getElementById('quotes-body');
+        document.getElementById('count-info').textContent = quotes.length + ' cotización(es)';
+
+        if (quotes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div>No hay cotizaciones.</div></td></tr>';
+            return;
+        }
+
+        var html = '';
+        quotes.forEach(function(q) {
+            var syncBadge = q.synced
+                ? '<span class="badge-synced">✅ Sincronizado</span>'
+                : '<span class="badge-unsynced">⏳ Pendiente</span>';
+            var pedidoSql = q.sql_pedido_id ? '#' + q.sql_pedido_id : '—';
+            html += '<tr>';
+            html += '<td style="color:#9ca3af">' + q.id + '</td>';
+            html += '<td style="font-weight:600">' + (q.client_name || '—') + '</td>';
+            html += '<td style="color:#6b7280">' + formatPhone(q.client_phone) + '</td>';
+            html += '<td style="color:#6b7280;white-space:nowrap">' + formatDate(q.created_at) + '</td>';
+            html += '<td>' + pedidoSql + '</td>';
+            html += '<td>' + syncBadge + '</td>';
+            html += '<td><button class="btn-detail" onclick="openDetail(' + q.id + ', \'' + (q.client_name || '').replace(/'/g, '') + '\')">Ver detalle</button></td>';
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+    }
+
+    function filterQuotes() {
+        var term = document.getElementById('search').value.toLowerCase();
+        if (!term) { renderQuotes(allQuotes); return; }
+        var filtered = allQuotes.filter(function(q) {
+            return (q.client_name || '').toLowerCase().includes(term) ||
+                   formatPhone(q.client_phone).includes(term);
+        });
+        renderQuotes(filtered);
+    }
+
+    async function loadQuotes() {
+        try {
+            var res = await fetch('/api/quotes');
+            allQuotes = await res.json();
+            renderQuotes(allQuotes);
+        } catch (err) {
+            document.getElementById('quotes-body').innerHTML =
+                '<tr><td colspan="7" style="color:red;padding:20px">Error al cargar: ' + err.message + '</td></tr>';
+        }
+    }
+
+    async function openDetail(quoteId, clientName) {
+        document.getElementById('modal-title').textContent = 'Cotización #' + quoteId + ' — ' + clientName;
+        document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">⏳ Cargando...</div>';
+        document.getElementById('modal-overlay').classList.add('open');
+
+        try {
+            var res = await fetch('/api/quotes/' + quoteId + '/details');
+            var items = await res.json();
+
+            if (items.length === 0) {
+                document.getElementById('modal-body').innerHTML = '<p style="color:#9ca3af;text-align:center;padding:40px">Sin ítems registrados.</p>';
+                return;
+            }
+
+            // Buscar datos generales de la cotización
+            var quote = allQuotes.find(function(q) { return q.id === quoteId; });
+            var total = items.reduce(function(sum, it) { return sum + (it.total_unitario * it.cantidad); }, 0);
+
+            var infoHtml = '<div class="info-grid">';
+            infoHtml += '<div class="info-item"><label>Cliente</label><span>' + (quote ? quote.client_name : '—') + '</span></div>';
+            infoHtml += '<div class="info-item"><label>Teléfono</label><span>' + (quote ? formatPhone(quote.client_phone) : '—') + '</span></div>';
+            infoHtml += '<div class="info-item"><label>Fecha</label><span>' + (quote ? formatDate(quote.created_at) : '—') + '</span></div>';
+            infoHtml += '<div class="info-item"><label>Pedido MS SQL</label><span>' + (quote && quote.sql_pedido_id ? '#' + quote.sql_pedido_id : 'No sincronizado') + '</span></div>';
+            infoHtml += '</div>';
+
+            var tableHtml = '<table class="detail-table">';
+            tableHtml += '<thead><tr><th>Artículo</th><th>Descripción</th><th style="text-align:right">Cant.</th><th style="text-align:right">P. Unit.</th><th style="text-align:right">Subtotal</th></tr></thead>';
+            tableHtml += '<tbody>';
+            items.forEach(function(it) {
+                var subtotal = (it.total_unitario || it.precio_unitario) * it.cantidad;
+                tableHtml += '<tr>';
+                tableHtml += '<td style="color:#6b7280;font-size:12px">' + (it.articulo || '—') + '</td>';
+                tableHtml += '<td>' + (it.descrip || '—') + '</td>';
+                tableHtml += '<td style="text-align:right">' + it.cantidad + '</td>';
+                tableHtml += '<td style="text-align:right">$' + (it.total_unitario || it.precio_unitario || 0).toFixed(2) + '</td>';
+                tableHtml += '<td style="text-align:right">$' + subtotal.toFixed(2) + '</td>';
+                tableHtml += '</tr>';
+            });
+            tableHtml += '</tbody>';
+            tableHtml += '<tfoot><tr><td colspan="4">TOTAL</td><td>$' + total.toFixed(2) + '</td></tr></tfoot>';
+            tableHtml += '</table>';
+
+            document.getElementById('modal-body').innerHTML = infoHtml + tableHtml;
+
+        } catch (err) {
+            document.getElementById('modal-body').innerHTML = '<p style="color:red;padding:20px">Error: ' + err.message + '</p>';
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('modal-overlay').classList.remove('open');
+    }
+
+    function handleOverlayClick(e) {
+        if (e.target === document.getElementById('modal-overlay')) closeModal();
+    }
+
+    loadQuotes();
+</script>
+</body>
+</html>

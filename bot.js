@@ -246,18 +246,61 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                 return responses;
             }
 
-            const results = await searchProducts(textMessage);
+            // Detectar si el cliente envió una lista separada por comas
+            const terms = textMessage.split(',')
+                .map(t => t.trim())
+                .filter(t => t.length >= 3);
 
-            if (results.length === 0) {
-                reply(`No encontré ningún artículo que coincida con "${textMessage}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
-                return responses;
+            if (terms.length > 1) {
+                // Búsqueda múltiple — una por cada término
+                let allFound = [];
+                let msgParts = [];
+                let offset = 0;
+
+                for (const term of terms) {
+                    const results = await searchProducts(term);
+                    if (results.length === 0) {
+                        msgParts.push(`🔍 *"${term}"*: sin resultados.`);
+                    } else {
+                        let section = `🔍 *"${term}"* (${results.length} encontrados):\n`;
+                        results.slice(0, PAGE_SIZE).forEach((r, i) => {
+                            const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
+                            section += `*${offset + i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
+                        });
+                        msgParts.push(section);
+                        allFound = allFound.concat(results.slice(0, PAGE_SIZE));
+                        offset += results.slice(0, PAGE_SIZE).length;
+                    }
+                }
+
+                if (allFound.length === 0) {
+                    reply(`No encontré ningún artículo para los términos buscados.\n\nIntenta con palabras más generales.`);
+                    return responses;
+                }
+
+                session.allResults = allFound;
+                session.searchPage = 0;
+                session.searchResults = allFound;
+                session.state = 'SELECTING_ITEM';
+
+                const msg = msgParts.join('\n') + `\n👉 Escribe el *número* para agregar a tu cotización, o busca otra palabra.`;
+                reply(msg);
+
+            } else {
+                // Búsqueda simple — flujo normal con paginación
+                const results = await searchProducts(terms[0] || textMessage);
+
+                if (results.length === 0) {
+                    reply(`No encontré ningún artículo que coincida con "${textMessage}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
+                    return responses;
+                }
+
+                session.allResults = results;
+                session.searchPage = 0;
+                session.state = 'SELECTING_ITEM';
+
+                reply(buildResultsPage(session));
             }
-
-            session.allResults = results;
-            session.searchPage = 0;
-            session.state = 'SELECTING_ITEM';
-
-            reply(buildResultsPage(session));
 
         } else if (session.state === 'SELECTING_ITEM') {
             const num = parseInt(textMessage, 10);

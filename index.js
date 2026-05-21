@@ -4,8 +4,8 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const { startBot, botState, processMessage, userSessions, sendBroadcast } = require('./bot.js');
-const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, getLogs, clearLogs } = require('./localDb.js');
-const { startSyncTask } = require('./syncTask.js');
+const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, getLogs, clearLogs, getAllQuotes, getQuoteDetailsById } = require('./localDb.js');
+const { startSyncTask, syncProducts } = require('./syncTask.js');
 const multer = require('multer');
 
 const storage = multer.diskStorage({
@@ -382,6 +382,40 @@ app.post('/api/campaigns/:id/send', async (req, res) => {
             .catch(err => console.error(`Error en campaña ${campaign.id}:`, err));
 
         res.json({ ok: true, message: `Iniciando envío a ${clients.length} clientes.` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Cotizaciones ─────────────────────────────────────────────────────────────
+app.get('/quotes', (_req, res) => {
+    res.sendFile(path.join(__dirname, 'quotes.html'));
+});
+
+app.get('/api/quotes', async (_req, res) => {
+    try {
+        const quotes = await getAllQuotes();
+        res.json(quotes);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/quotes/:id/details', async (req, res) => {
+    try {
+        const details = await getQuoteDetailsById(req.params.id);
+        res.json(details);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Sincronización manual de productos ──────────────────────────────────────
+app.post('/api/sync/products', async (_req, res) => {
+    try {
+        // Ejecutar en background para no bloquear la respuesta
+        syncProducts().catch(err => console.error('[SYNC-MANUAL]', err.message));
+        res.json({ ok: true, message: 'Sincronización iniciada. Revisa los logs para ver el resultado.' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
