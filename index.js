@@ -4,8 +4,9 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const { startBot, botState, processMessage, userSessions, sendBroadcast } = require('./bot.js');
-const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, getLogs, clearLogs, getAllQuotes, getQuoteDetailsById } = require('./localDb.js');
+const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, saveLog, getLogs, clearLogs, getAllQuotes, getQuoteDetailsById, deleteQuote } = require('./localDb.js');
 const { startSyncTask, syncProducts } = require('./syncTask.js');
+const { deleteSqlPedido } = require('./db.js');
 const multer = require('multer');
 
 const storage = multer.diskStorage({
@@ -409,6 +410,52 @@ app.get('/api/quotes/:id/details', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+app.delete('/api/quotes/:id', async (req, res) => {
+    const quoteId = parseInt(req.params.id, 10);
+    try {
+        const quotes = await getAllQuotes();
+        const quote = quotes.find(q => q.id === quoteId);
+        if (!quote) {
+            return res.status(404).json({ error: 'Cotización no encontrada en SQLite.' });
+        }
+
+        // Si está sincronizado con MS SQL, intentar borrarlo de allí primero
+        if (quote.synced === 1 && quote.sql_pedido_id) {
+            try {
+                const mssqlResult = await deleteSqlPedido(quote.sql_pedido_id);
+                if (!mssqlResult.deleted) {
+                    if (mssqlResult.reason === 'not_pending') {
+                        return res.status(400).json({
+                            error: 'not_pending',
+                            message: `El pedido #${quote.sql_pedido_id} ya no está pendiente (Estado actual: ${mssqlResult.estado}). No se permite eliminar.`
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error(`[API-DELETE] Error conectando a MS SQL para borrar cotización #${quoteId}:`, err);
+                return res.status(500).json({
+                    error: 'mssql_offline',
+                    message: 'No se pudo conectar a la base de datos MS SQL para verificar y eliminar el pedido. Operación cancelada para mantener la integridad de los datos.'
+                });
+            }
+        }
+
+        // Si la eliminación en MS SQL fue exitosa (o no estaba sincronizado)
+        await deleteQuote(quoteId);
+        
+        // Guardar registro en logs locales para trazabilidad
+        const logMsg = `Cotización #${quoteId} (${quote.client_name || 'Sin nombre'}) eliminada por el usuario.` + 
+            (quote.sql_pedido_id ? ` También se eliminó de MS SQL (Pedido #${quote.sql_pedido_id}).` : '');
+        await saveLog('INFO', 'api', logMsg);
+
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('Error en DELETE /api/quotes/:id:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 // ─── Sincronización manual de productos ──────────────────────────────────────
 app.post('/api/sync/products', async (_req, res) => {

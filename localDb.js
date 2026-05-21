@@ -386,6 +386,11 @@ async function clearLogs(olderThanDays = 30) {
     );
 }
 
+async function deleteQuote(id) {
+    const db = await getLocalDb();
+    return db.run('DELETE FROM quotes WHERE id = ?', [id]);
+}
+
 module.exports = {
     getLocalDb,
     getUser,
@@ -399,6 +404,7 @@ module.exports = {
     getUnsyncedQuotes,
     getQuoteDetailsById,
     markQuoteSynced,
+    deleteQuote,
     getActivePromotions,
     getAllPromotions,
     addPromotion,

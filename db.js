@@ -227,11 +227,61 @@ async function createSqlPedido(items, clientName) {
     }
 }
 
+async function deleteSqlPedido(pedidoId) {
+    let transaction;
+    try {
+        const pool = await connectToDatabase();
+        
+        // 1. Verificar si el pedido existe y cuál es su estado
+        const checkReq = pool.request();
+        checkReq.input('pedido', sql.Int, pedidoId);
+        const checkRes = await checkReq.query('SELECT [ESTADO] FROM pedidos WHERE [pedido] = @pedido');
+        
+        if (checkRes.recordset.length === 0) {
+            // El pedido ya no existe en MS SQL, permitimos continuar para limpiar SQLite
+            return { deleted: true, reason: 'not_found' };
+        }
+        
+        const estado = checkRes.recordset[0].ESTADO ? checkRes.recordset[0].ESTADO.trim() : '';
+        if (estado !== 'PE') {
+            return { deleted: false, reason: 'not_pending', estado: estado };
+        }
+        
+        // 2. Si el estado es 'PE', procedemos con el borrado transaccional
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        
+        const requestPartidas = new sql.Request(transaction);
+        requestPartidas.input('pedido', sql.Int, pedidoId);
+        await requestPartidas.query('DELETE FROM pedpar WHERE [pedido] = @pedido');
+        
+        const requestPedido = new sql.Request(transaction);
+        requestPedido.input('pedido', sql.Int, pedidoId);
+        await requestPedido.query('DELETE FROM pedidos WHERE [pedido] = @pedido');
+        
+        await transaction.commit();
+        console.log(`✅ Pedido MS SQL #${pedidoId} y sus partidas eliminados correctamente.`);
+        return { deleted: true, reason: 'deleted' };
+    } catch (err) {
+        if (transaction) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackErr) {
+                console.error('Error al hacer rollback del pedido:', rollbackErr);
+            }
+        }
+        console.error(`Error al eliminar el pedido ${pedidoId} en MS SQL:`, err);
+        throw err;
+    }
+}
+
 module.exports = {
     sql,
     connectToDatabase,
     query,
     searchProducts,
     createSqlClient,
-    createSqlPedido
+    createSqlPedido,
+    deleteSqlPedido
 };
+

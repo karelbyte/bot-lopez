@@ -26,6 +26,7 @@ function getSession(identifier) {
             searchPage: 0,
             searchResults: [],
             selectedItem: null,
+            selectionQueue: [],
             lastActivity: now
         };
     } else {
@@ -38,6 +39,7 @@ function getSession(identifier) {
                 searchPage: 0,
                 searchResults: [],
                 selectedItem: null,
+                selectionQueue: [],
                 lastActivity: now
             };
         } else {
@@ -48,7 +50,7 @@ function getSession(identifier) {
     return userSessions[identifier];
 }
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 // Construye el mensaje de resultados para la página actual y actualiza session.searchResults
 function buildResultsPage(session) {
@@ -93,6 +95,67 @@ function buildResultsPage(session) {
  *                           Las búsquedas de productos sí se ejecutan (lectura real).
  *                           La sesión en memoria sí se usa (no es persistente).
  */
+async function executeProductSearch(textMessage, session, responses) {
+    const reply = (text) => responses.push({ type: 'text', text });
+    
+    // Detectar si el cliente envió una lista separada por comas
+    const terms = textMessage.split(',')
+        .map(t => t.trim())
+        .filter(t => t.length >= 3);
+
+    if (terms.length > 1) {
+        // Búsqueda múltiple — una por cada término
+        let allFound = [];
+        let msgParts = [];
+        let offset = 0;
+
+        for (const term of terms) {
+            const results = await searchProducts(term);
+            if (results.length === 0) {
+                msgParts.push(`🔍 *"${term}"*: sin resultados.`);
+            } else {
+                let section = `🔍 *"${term}"* (${results.length} encontrados):\n`;
+                results.slice(0, PAGE_SIZE).forEach((r, i) => {
+                    const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
+                    section += `*${offset + i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
+                });
+                msgParts.push(section);
+                allFound = allFound.concat(results.slice(0, PAGE_SIZE));
+                offset += results.slice(0, PAGE_SIZE).length;
+            }
+        }
+
+        if (allFound.length === 0) {
+            reply(`No encontré ningún artículo para los términos buscados.\n\nIntenta con palabras más generales.`);
+            return;
+        }
+
+        session.allResults = allFound;
+        session.searchPage = 0;
+        session.searchResults = allFound;
+        session.state = 'SELECTING_ITEM';
+
+        const msg = msgParts.join('\n') + `\n👉 Escribe el *número* para agregar a tu cotización, o busca otra palabra.`;
+        reply(msg);
+
+    } else {
+        // Búsqueda simple — flujo normal con paginación
+        const searchTerm = terms[0] || textMessage;
+        const results = await searchProducts(searchTerm);
+
+        if (results.length === 0) {
+            reply(`No encontré ningún artículo que coincida con "${searchTerm}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
+            return;
+        }
+
+        session.allResults = results;
+        session.searchPage = 0;
+        session.state = 'SELECTING_ITEM';
+
+        reply(buildResultsPage(session));
+    }
+}
+
 async function processMessage(identifier, textMessage, dryRun = false) {
     const responses = [];
     const textLower = textMessage.toLowerCase().trim();
@@ -211,6 +274,7 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
             session.allResults = [];
             session.searchPage = 0;
             session.selectedItem = null;
+            session.selectionQueue = [];
             reply('Cotización cancelada. ¿Qué artículo deseas buscar?');
             return responses;
         }
@@ -246,64 +310,10 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                 return responses;
             }
 
-            // Detectar si el cliente envió una lista separada por comas
-            const terms = textMessage.split(',')
-                .map(t => t.trim())
-                .filter(t => t.length >= 3);
-
-            if (terms.length > 1) {
-                // Búsqueda múltiple — una por cada término
-                let allFound = [];
-                let msgParts = [];
-                let offset = 0;
-
-                for (const term of terms) {
-                    const results = await searchProducts(term);
-                    if (results.length === 0) {
-                        msgParts.push(`🔍 *"${term}"*: sin resultados.`);
-                    } else {
-                        let section = `🔍 *"${term}"* (${results.length} encontrados):\n`;
-                        results.slice(0, PAGE_SIZE).forEach((r, i) => {
-                            const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
-                            section += `*${offset + i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
-                        });
-                        msgParts.push(section);
-                        allFound = allFound.concat(results.slice(0, PAGE_SIZE));
-                        offset += results.slice(0, PAGE_SIZE).length;
-                    }
-                }
-
-                if (allFound.length === 0) {
-                    reply(`No encontré ningún artículo para los términos buscados.\n\nIntenta con palabras más generales.`);
-                    return responses;
-                }
-
-                session.allResults = allFound;
-                session.searchPage = 0;
-                session.searchResults = allFound;
-                session.state = 'SELECTING_ITEM';
-
-                const msg = msgParts.join('\n') + `\n👉 Escribe el *número* para agregar a tu cotización, o busca otra palabra.`;
-                reply(msg);
-
-            } else {
-                // Búsqueda simple — flujo normal con paginación
-                const results = await searchProducts(terms[0] || textMessage);
-
-                if (results.length === 0) {
-                    reply(`No encontré ningún artículo que coincida con "${textMessage}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
-                    return responses;
-                }
-
-                session.allResults = results;
-                session.searchPage = 0;
-                session.state = 'SELECTING_ITEM';
-
-                reply(buildResultsPage(session));
-            }
+            await executeProductSearch(textMessage, session, responses);
 
         } else if (session.state === 'SELECTING_ITEM') {
-            const num = parseInt(textMessage, 10);
+            const num = parseInt(textMessage.trim(), 10);
 
             // 0 = ver más resultados
             if (num === 0) {
@@ -315,22 +325,27 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     reply(buildResultsPage(session));
                 }
 
-            // Número válido de la página actual
-            } else if (!isNaN(num) && num > 0 && num <= session.searchResults.length) {
-                session.selectedItem = session.searchResults[num - 1];
-                session.state = 'ASKING_QUANTITY';
-                reply(`Has seleccionado: *${session.selectedItem.DESCRIP}*\n\n¿Qué *cantidad* deseas agregar a la cotización? (Escribe un número)`);
+            // Detectar selección múltiple o simple (ej. "1, 4, 8" o "1 y 4")
+            } else if (/^[0-9\s,y\-]+$/i.test(textMessage.trim())) {
+                const numbers = textMessage.match(/\d+/g);
+                const indices = numbers ? numbers.map(n => parseInt(n, 10)) : [];
+                const validIndices = indices.filter(n => n > 0 && n <= session.searchResults.length);
+
+                if (validIndices.length > 0) {
+                    // Cargar selección en la cola
+                    session.selectionQueue = validIndices.map(idx => session.searchResults[idx - 1]);
+                    // Tomar el primer artículo de la cola
+                    session.selectedItem = session.selectionQueue.shift();
+                    session.state = 'ASKING_QUANTITY';
+                    
+                    reply(`Has seleccionado: *${session.selectedItem.DESCRIP}*\n\n¿Qué *cantidad* deseas agregar? (Escribe un número)`);
+                } else {
+                    reply('Los números seleccionados no se encuentran en la lista actual de resultados. Intenta de nuevo o escribe otra palabra para buscar.');
+                }
 
             // No es número válido → nueva búsqueda
             } else {
-                const results = await searchProducts(textMessage);
-                if (results.length === 0) {
-                    reply(`No encontré ningún artículo que coincida con "${textMessage}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
-                    return responses;
-                }
-                session.allResults = results;
-                session.searchPage = 0;
-                reply(buildResultsPage(session));
+                await executeProductSearch(textMessage, session, responses);
             }
 
         } else if (session.state === 'ASKING_QUANTITY') {
@@ -362,10 +377,19 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     });
                 }
 
-                session.state = 'IDLE';
-                session.selectedItem = null;
-                session.searchResults = [];
-                reply(`✅ Se agregó *${cantidad}x ${item.DESCRIP}* a tu cotización.\n\nPara buscar otro artículo, escribe su nombre. \n\nSi ya terminaste y quieres tu cotizacion en formato PDF, escribe *terminar*. Si deseas borrar todo y empezar una nueva cotizacion, escribe *cancelar*.`);
+                // Si hay más elementos en la cola
+                if (session.selectionQueue && session.selectionQueue.length > 0) {
+                    session.selectedItem = session.selectionQueue.shift();
+                    // Permanecemos en el estado ASKING_QUANTITY
+                    reply(`✅ Se agregó *${cantidad}x ${item.DESCRIP}* a tu cotización.\n\nSiguiente artículo seleccionado: *${session.selectedItem.DESCRIP}*\n¿Qué *cantidad* deseas agregar? (Escribe un número)`);
+                } else {
+                    // Fin de la cola
+                    session.state = 'IDLE';
+                    session.selectedItem = null;
+                    session.searchResults = [];
+                    session.selectionQueue = [];
+                    reply(`✅ Se agregaron tus artículos seleccionados a la cotización.\n\nPara buscar otro artículo, escribe su descripción.\n\nSi ya terminaste y quieres tu cotización en formato PDF, escribe *terminar*. Si deseas borrar todo y empezar una nueva, escribe *cancelar*.`);
+                }
             } else {
                 reply('Por favor, escribe una cantidad válida (un número mayor a 0).');
             }
