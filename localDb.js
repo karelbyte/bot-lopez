@@ -391,6 +391,85 @@ async function deleteQuote(id) {
     return db.run('DELETE FROM quotes WHERE id = ?', [id]);
 }
 
+async function getLocalPedidoStatus(sqlPedidoId) {
+    try {
+        const db = await getLocalDb();
+        // 1. Obtener la cabecera de la cotización local por sql_pedido_id
+        const quote = await db.get(`
+            SELECT q.id, q.created_at, q.status, q.synced, q.sql_pedido_id, c.name as client_name
+            FROM quotes q
+            JOIN clients c ON c.phone = q.client_phone
+            WHERE q.sql_pedido_id = ?
+        `, [sqlPedidoId]);
+        
+        if (!quote) return null;
+        
+        // 2. Obtener los detalles de la cotización local
+        const details = await db.all(`
+            SELECT cantidad, descrip, precio_unitario, monto_iva, total_unitario
+            FROM quote_details
+            WHERE quote_id = ?
+        `, [quote.id]);
+        
+        let subtotal = 0;
+        let iva = 0;
+        let total = 0;
+        
+        const items = details.map(d => {
+            const qty = d.cantidad || 0;
+            const price = d.precio_unitario || 0;
+            const tax = d.monto_iva || 0;
+            const unitTotal = d.total_unitario || 0;
+            
+            subtotal += price * qty;
+            iva += tax * qty;
+            total += unitTotal * qty;
+            
+            return {
+                cantidad: qty,
+                descripcion: d.descrip ? d.descrip.trim() : 'Sin descripción'
+            };
+        });
+        
+        return {
+            pedido: quote.sql_pedido_id,
+            fecha: quote.created_at,
+            cliente: quote.client_name || 'Cliente local',
+            importe: subtotal,
+            impuesto: iva,
+            total: total,
+            estado: 'PE', // En caché local asumimos Cotizado / Pendiente de Caja (PE)
+            items: items,
+            isLocalCache: true
+        };
+    } catch (error) {
+        console.error('Error al obtener status de pedido local:', error);
+        return null;
+    }
+}
+
+async function deleteQuoteDetailById(detailId) {
+    try {
+        const db = await getLocalDb();
+        await db.run('DELETE FROM quote_details WHERE id = ?', [detailId]);
+        console.log(`[DB-QUOTE] Detalle de cotización eliminado: ID ${detailId}`);
+    } catch (err) {
+        console.error(`Error al eliminar detalle de cotización ID ${detailId}:`, err);
+        throw err;
+    }
+}
+
+async function updateQuoteDetailQuantityById(detailId, quantity) {
+    try {
+        const db = await getLocalDb();
+        await db.run('UPDATE quote_details SET cantidad = ? WHERE id = ?', [quantity, detailId]);
+        console.log(`[DB-QUOTE] Cantidad de detalle de cotización actualizada: ID ${detailId} -> ${quantity}`);
+    } catch (err) {
+        console.error(`Error al actualizar cantidad de detalle de cotización ID ${detailId}:`, err);
+        throw err;
+    }
+}
+
 module.exports = {
     getLocalDb,
     getUser,
@@ -420,5 +499,9 @@ module.exports = {
     getProductsCount,
     saveLog,
     getLogs,
-    clearLogs
+    clearLogs,
+    getLocalPedidoStatus,
+    deleteQuoteDetailById,
+    updateQuoteDetailQuantityById
 };
+

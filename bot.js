@@ -2,8 +2,8 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
-const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido } = require('./db.js');
-const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog } = require('./localDb.js');
+const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido, getSqlPedidoStatus } = require('./db.js');
+const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog, getLocalPedidoStatus, deleteQuoteDetailById, updateQuoteDetailQuantityById } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
 
 const botState = {
@@ -79,6 +79,44 @@ function buildResultsPage(session) {
     }
 
     return msj;
+}
+
+async function formatQuoteSummary(identifier, simulatedQuote = null) {
+    const pending = simulatedQuote !== null 
+        ? simulatedQuote 
+        : await getPendingQuote(identifier);
+
+    if (!pending || pending.length === 0) {
+        return '🛒 *Tu cotización está vacía.*\n\nEscribe el nombre o descripción de un artículo para buscar y comenzar a cotizar.';
+    }
+
+    let msg = `📋 *Tu Cotización Actual:*\n\n`;
+    let subtotal = 0;
+    let totalIva = 0;
+    let total = 0;
+
+    pending.forEach((it, i) => {
+        const itemSubtotal = it.precio_unitario * it.cantidad;
+        const itemIva = it.monto_iva * it.cantidad;
+        const itemTotal = it.total_unitario * it.cantidad;
+
+        subtotal += itemSubtotal;
+        totalIva += itemIva;
+        total += itemTotal;
+
+        msg += `*${i + 1}.* ${it.descrip}\n`;
+        msg += `   ${it.cantidad} X $${it.total_unitario.toFixed(2)} = *$${itemTotal.toFixed(2)}*\n\n`;
+    });
+
+    msg += `💵 *TOTAL NETO:* $${total.toFixed(2)}\n\n`;
+
+    msg += `✏️ *¿Deseas modificar algo?*\n`;
+    msg += `• Para *cambiar la cantidad*, escribe: *cambiar [número] a [cantidad]* (Ejemplo: \`cambiar 1 a 5\` o simplemente \`1 a 5\`)\n`;
+    msg += `• Para *eliminar un producto*, escribe: *eliminar [número]* o *quitar [número]* (Ejemplo: \`eliminar 2\`)\n\n`;
+    msg += `• Para *agregar más artículos*, escribe el nombre o la descripción del producto.\n\n`;
+    msg += `👉 Escribe *terminar* para generar tu cotización, o escribe *cancelar* para limpiar todo.`;
+
+    return msg;
 }
 
 /**
@@ -184,8 +222,108 @@ async function processMessage(identifier, textMessage, dryRun = false) {
     const simulatedUser = dryRun ? (session.simulatedUser || null) : null;
 
     try {
+        // Interceptar consulta de folio de pedido (ej: PE12345, PE-12345, pedido 12345, folio-12345)
+        const orderQueryMatch = textLower.match(/^(?:pe-?|folio-?|pedido-?\s*)(\d+)$/i);
+        if (orderQueryMatch) {
+            const pedidoId = parseInt(orderQueryMatch[1], 10);
+            reply(`⏳ Buscando detalles de la cotización *PE${pedidoId}*, por favor espera...`);
+            
+            try {
+                let orderData = null;
+                let isOfflineFallback = false;
+                
+                try {
+                    orderData = await getSqlPedidoStatus(pedidoId);
+                } catch (sqlErr) {
+                    console.warn(`[BOT-QUERY] MS SQL offline al buscar pedido PE${pedidoId}. Intentando SQLite.`, sqlErr.message);
+                    isOfflineFallback = true;
+                    // Intentar desde la caché local de SQLite
+                    orderData = await getLocalPedidoStatus(pedidoId);
+                }
+                
+                if (orderData) {
+                    // Mapear el estado a un texto elegante y amigable en español
+                    let estadoDecorado = '';
+                    let guiaCaja = '';
+                    
+                    switch (orderData.estado) {
+                        case 'PE':
+                        case 'pending':
+                            estadoDecorado = '⏳ COTIZADO / PENDIENTE DE CAJA';
+                            guiaCaja = '\n👉 *¿Qué sigue?* Pasa a caja con tu número de folio para realizar el pago e iniciar la producción de tus artículos.';
+                            break;
+                        case 'SU':
+                        case 'delivered':
+                            estadoDecorado = '📦 SURTIDO / ENTREGADO';
+                            guiaCaja = '\n👉 *Nota:* ¡Tu pedido ya ha sido completado y entregado en mostrador!';
+                            break;
+                        case 'CA':
+                        case 'cancelled':
+                            estadoDecorado = '❌ CANCELADO';
+                            guiaCaja = '\n👉 *Nota:* Esta cotización o pedido ha sido cancelado.';
+                            break;
+                        case 'FA':
+                        case 'invoiced':
+                            estadoDecorado = '📄 FACTURADO';
+                            guiaCaja = '\n👉 *Nota:* Tu pedido ha sido facturado y procesado.';
+                            break;
+                        case 'CO':
+                        case 'paid':
+                            estadoDecorado = '💵 PAGADO';
+                            guiaCaja = '\n👉 *Nota:* Tu pedido ya ha sido pagado y se encuentra actualmente en producción.';
+                            break;
+                        default:
+                            estadoDecorado = `📌 ${orderData.estado}`;
+                            guiaCaja = '';
+                    }
+                    
+                    // Formatear la fecha
+                    const fechaFormat = new Date(orderData.fecha).toLocaleDateString('es-MX', {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric'
+                    });
+                    
+                    // Construir lista de artículos
+                    let articulosTxt = '';
+                    if (orderData.items && orderData.items.length > 0) {
+                        articulosTxt = orderData.items.map(it => `• *${it.cantidad}x* ${it.descripcion}`).join('\n');
+                    } else {
+                        articulosTxt = '_Sin artículos registrados en este folio._';
+                    }
+                    
+                    let responseMsg = `📦 *Detalle de Cotización PE${orderData.pedido}*\n\n`;
+                    
+                    if (isOfflineFallback) {
+                        responseMsg += `⚠️ *Nota:* Mostrando información de la caché local debido a mantenimiento técnico.\n\n`;
+                    }
+                    
+                    responseMsg += `👤 *Cliente:* ${orderData.cliente}\n`;
+                    responseMsg += `📅 *Fecha:* ${fechaFormat}\n`;
+                    responseMsg += `📌 *Estado:* ${estadoDecorado}\n\n`;
+                    
+                    responseMsg += `💵 *Resumen Financiero:*\n`;
+                    responseMsg += `• Subtotal: $${(orderData.importe).toFixed(2)}\n`;
+                    responseMsg += `• I.V.A.: $${(orderData.impuesto).toFixed(2)}\n`;
+                    responseMsg += `• *TOTAL NETO:* $${(orderData.total).toFixed(2)}\n\n`;
+                    
+                    responseMsg += `📋 *Artículos:*\n${articulosTxt}\n`;
+                    responseMsg += guiaCaja + `\n\n_Gracias por cotizar con Lopez Impresores._`;
+                    
+                    reply(responseMsg);
+                } else {
+                    reply(`🔍 No encontré ningún pedido o cotización con el folio *PE${pedidoId}*.\n\nPor favor, verifica que el número sea correcto.`);
+                }
+            } catch (err) {
+                console.error(`Error en consulta de pedido PE${pedidoId}:`, err);
+                reply(`❌ Ocurrió un error al consultar el folio *PE${pedidoId}*. Por favor, inténtalo de nuevo más tarde.`);
+            }
+            return responses;
+        }
+
         // 1. Verificar si el usuario existe
         let user = dryRun ? simulatedUser : await getUser(identifier);
+
 
         if (!user) {
             if (session.state !== 'ASKING_NAME') {
@@ -209,6 +347,80 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
                 await handlePromotions('POST_NAME');
                 reply(`¡Gracias, ${textMessage}! Ya te hemos registrado.\n\n¿Qué artículo deseas buscar o cotizar? Escribe el nombre o parte del nombre.`);
             }
+        }
+
+        // ─── COMANDOS DE COTIZACIÓN INTERACTIVA ────────────────────────────────
+        
+        // 1. Ver resumen de cotización actual
+        if (/^(?:ver\s*cotizaci[oó]n|cotizaci[oó]n|resumen|ver|lista)$/i.test(textLower)) {
+            console.log(`[BOT-EDIT] ${identifier} solicitó ver resumen de cotización.`);
+            const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
+            reply(summary);
+            return responses;
+        }
+
+        // 2. Eliminar un producto por su número
+        const deleteMatch = textLower.match(/^(?:eliminar|quitar|borrar|del|rm)\s*(\d+)$/i);
+        if (deleteMatch) {
+            const idx = parseInt(deleteMatch[1], 10);
+            const pending = dryRun ? (session.simulatedQuote || []) : await getPendingQuote(identifier);
+            
+            console.log(`[BOT-EDIT] ${identifier} intentó eliminar artículo #${idx} de su cotización.`);
+            
+            if (idx < 1 || idx > pending.length) {
+                reply(`❌ Número inválido. Por favor selecciona un número de artículo entre 1 y ${pending.length}.`);
+                return responses;
+            }
+            
+            const itemToDelete = pending[idx - 1];
+            
+            if (dryRun) {
+                session.simulatedQuote.splice(idx - 1, 1);
+            } else {
+                await deleteQuoteDetailById(itemToDelete.id);
+            }
+            
+            reply(`🗑️ Se ha eliminado *${itemToDelete.descrip}* de tu cotización.`);
+            
+            const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
+            reply(summary);
+            return responses;
+        }
+
+        // 3. Cambiar cantidad de un producto por su número
+        const changeQtyRegex1 = /^(?:cambiar|modificar|cantidad|set)\s+(\d+)\s*(?:a|to|=|\s)\s*(\d+)$/i;
+        const changeQtyRegex2 = /^(\d+)\s*(?:a|to|=)\s*(\d+)$/i;
+        const quantityMatch = textLower.match(changeQtyRegex1) || textLower.match(changeQtyRegex2);
+        
+        if (quantityMatch) {
+            const idx = parseInt(quantityMatch[1], 10);
+            const newQty = parseInt(quantityMatch[2], 10);
+            const pending = dryRun ? (session.simulatedQuote || []) : await getPendingQuote(identifier);
+            
+            console.log(`[BOT-EDIT] ${identifier} intentó cambiar cantidad del artículo #${idx} a ${newQty}.`);
+            
+            if (idx < 1 || idx > pending.length) {
+                reply(`❌ Número inválido. Por favor selecciona un número de artículo entre 1 y ${pending.length}.`);
+                return responses;
+            }
+            
+            if (isNaN(newQty) || newQty <= 0) {
+                reply(`❌ Por favor ingresa una cantidad válida mayor a 0.`);
+                return responses;
+            }
+            
+            const itemToUpdate = pending[idx - 1];
+            
+            if (dryRun) {
+                itemToUpdate.cantidad = newQty;
+            } else {
+                await updateQuoteDetailQuantityById(itemToUpdate.id, newQty);
+            }
+            
+            reply(`✏️ Se actualizó la cantidad de *${itemToUpdate.descrip}* a *${newQty}*.`);
+            
+            const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
+            reply(summary);
             return responses;
         }
 
@@ -275,7 +487,8 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
             session.searchPage = 0;
             session.selectedItem = null;
             session.selectionQueue = [];
-            reply('Cotización cancelada. ¿Qué artículo deseas buscar?');
+            await handlePromotions('WELCOME');
+            replyWithLogo(`Hasta luego ${user.name} 👋\n\nGracias por contactar a *Lopez Impresores*.\nRecuerda que estamos en:\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx\n\nEstamos pendientes para asesorarte con otra cotización o información. ¡Que tengas un excelente día! 😊`);
             return responses;
         }
 
@@ -388,7 +601,9 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     session.selectedItem = null;
                     session.searchResults = [];
                     session.selectionQueue = [];
-                    reply(`✅ Se agregaron tus artículos seleccionados a la cotización.\n\nPara buscar otro artículo, escribe su descripción.\n\nSi ya terminaste y quieres tu cotización en formato PDF, escribe *terminar*. Si deseas borrar todo y empezar una nueva, escribe *cancelar*.`);
+                    
+                    const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
+                    reply(`✅ Se agregaron tus artículos seleccionados a la cotización.\n\n${summary}`);
                 }
             } else {
                 reply('Por favor, escribe una cantidad válida (un número mayor a 0).');
@@ -430,8 +645,30 @@ async function startBot() {
         if (connection === 'close') {
             botState.connected = false;
             botState.qr = null;
-            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) setTimeout(startBot, 5000);
+            const statusCode = (lastDisconnect.error)?.output?.statusCode;
+            const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+            
+            console.log(`[BOT-CONN] Conexión cerrada. Código de estado: ${statusCode || 'desconocido'}`);
+            
+            if (isLoggedOut) {
+                console.log('🚪 [BOT-CONN] Sesión desvinculada por el usuario o revocada. Limpiando credenciales antiguas...');
+                botState.hasConnected = false;
+                
+                try {
+                    if (fs.existsSync(authDir)) {
+                        fs.rmSync(authDir, { recursive: true, force: true });
+                        console.log('🧹 [BOT-CONN] Credenciales en disco eliminadas correctamente.');
+                    }
+                } catch (err) {
+                    console.error('❌ [BOT-CONN] Error al eliminar la carpeta de sesión:', err.message);
+                }
+                
+                console.log('🔄 [BOT-CONN] Reiniciando motor en 3 segundos para generar nuevo código QR...');
+                setTimeout(startBot, 3000);
+            } else {
+                console.log('🔌 [BOT-CONN] Error de conexión o reinicio de red. Intentando reconectar en 5 segundos...');
+                setTimeout(startBot, 5000);
+            }
         } else if (connection === 'open') {
             console.log('✅ Bot conectado exitosamente a WhatsApp!');
             botState.connected = true;
