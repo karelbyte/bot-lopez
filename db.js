@@ -61,7 +61,7 @@ async function searchProducts(searchTerm) {
             return `[DESCRIP] LIKE @term${i} COLLATE Latin1_General_CI_AI`;
         });
         const result = await request.query(`
-            SELECT [ARTICULO], [DESCRIP], [PRECIO1], [IMPUESTO]
+            SELECT [ARTICULO], [DESCRIP], [PRECIO1], [PRECIO2], [PRECIO3], [PRECIO4], [PRECIO5], [PRECIO6], [PRECIO7], [PRECIO8], [PRECIO9], [PRECIO10], [IMPUESTO], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10]
             FROM prods
             WHERE ${conditions.join(' AND ')}
             ORDER BY [DESCRIP]

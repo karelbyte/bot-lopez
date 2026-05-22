@@ -3,7 +3,7 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido, getSqlPedidoStatus } = require('./db.js');
-const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog, getLocalPedidoStatus, deleteQuoteDetailById, updateQuoteDetailQuantityById } = require('./localDb.js');
+const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog, getLocalPedidoStatus, deleteQuoteDetailById, updateQuoteDetailQuantityById, updateQuoteDetailPriceById, getProductByArticulo } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
 
 const botState = {
@@ -50,6 +50,52 @@ function getSession(identifier) {
     return userSessions[identifier];
 }
 
+/**
+ * Calcula el IVA y el precio total unitario a partir del precio base.
+ * Usa redondeo a 2 decimales (no Math.ceil) para evitar precios inflados.
+ * @param {number} precioBase - Precio sin impuesto.
+ * @param {string|null} impuesto - 'IVA' si aplica, cualquier otro valor = exento.
+ * @returns {{ totalUnitario: number, montoIva: number }}
+ */
+function calcularIva(precioBase, impuesto) {
+    if (impuesto === 'IVA') {
+        const totalUnitario = Math.round(precioBase * 1.16 * 100) / 100;
+        const montoIva      = Math.round((totalUnitario - precioBase) * 100) / 100;
+        return { totalUnitario, montoIva };
+    }
+    return { totalUnitario: precioBase, montoIva: 0 };
+}
+
+/**
+ * Selecciona el precio de un producto basado en la cantidad y los campos C2-C10.
+ * @param {object} item - El objeto producto con PRECIO1-10 y C2-10.
+ * @param {number} cantidad - La cantidad deseada por el usuario.
+ * @returns {{price: number, priceLevel: string}} - El precio unitario y el nivel de precio aplicado (ej. 'PRECIO3').
+ */
+function selectPriceByQuantity(item, cantidad) {
+    let selectedPrice = parseFloat(item.PRECIO1) || 0;
+    let priceLevel = 'PRECIO1';
+    let matchedC = null;
+    let matchedIndex = null;
+
+    // Iterar de C10 a C2 para encontrar el umbral más alto que cumpla
+    for (let i = 10; i >= 2; i--) {
+        const cKey = 'C' + i;
+        const precioKey = 'PRECIO' + i;
+        const cValue = parseFloat(item[cKey]);
+        const precioValue = parseFloat(item[precioKey]);
+
+        if (!isNaN(cValue) && cValue > 0 && cantidad >= cValue && !isNaN(precioValue) && precioValue >= 0) {
+            selectedPrice = precioValue;
+            priceLevel = precioKey;
+            matchedC = cValue;
+            matchedIndex = i;
+            break; // Se encontró el umbral, salir del bucle
+        }
+    }
+    return { price: selectedPrice, priceLevel: priceLevel, matchedC, matchedIndex };
+}
+
 const PAGE_SIZE = 10;
 
 // Construye el mensaje de resultados para la página actual y actualiza session.searchResults
@@ -67,23 +113,22 @@ function buildResultsPage(session) {
 
     let msj = `🔍 *Resultados de búsqueda* (${pageNum}/${totalPages} — ${total} encontrados):\n\n`;
     pageItems.forEach((r, i) => {
-        const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
-        msj += `*${i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
+        msj += `*${i + 1}.* ${r.DESCRIP}\n`;
     });
 
     if (hasMore) {
         msj += `\n*0.* Ver más resultados ➡️`;
-        msj += `\n\n👉 Escribe el *número* para agregar a tu cotización, *0* para ver más, o busca otra palabra.`;
+        msj += `\n\n👉 Escribe el *número* para agregar a tu cotización y especificar la cantidad.`;
     } else {
-        msj += `\n\n👉 Escribe el *número* para agregar a tu cotización, o busca otra palabra.`;
+        msj += `\n\n👉 Escribe el *número* para agregar a tu cotización y especificar la cantidad.`;
     }
 
     return msj;
 }
 
 async function formatQuoteSummary(identifier, simulatedQuote = null) {
-    const pending = simulatedQuote !== null 
-        ? simulatedQuote 
+    const pending = simulatedQuote !== null
+        ? simulatedQuote
         : await getPendingQuote(identifier);
 
     if (!pending || pending.length === 0) {
@@ -135,7 +180,7 @@ async function formatQuoteSummary(identifier, simulatedQuote = null) {
  */
 async function executeProductSearch(textMessage, session, responses) {
     const reply = (text) => responses.push({ type: 'text', text });
-    
+
     // Detectar si el cliente envió una lista separada por comas
     const terms = textMessage.split(',')
         .map(t => t.trim())
@@ -154,8 +199,7 @@ async function executeProductSearch(textMessage, session, responses) {
             } else {
                 let section = `🔍 *"${term}"* (${results.length} encontrados):\n`;
                 results.slice(0, PAGE_SIZE).forEach((r, i) => {
-                    const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
-                    section += `*${offset + i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
+                    section += `*${offset + i + 1}.* ${r.DESCRIP}\n`;
                 });
                 msgParts.push(section);
                 allFound = allFound.concat(results.slice(0, PAGE_SIZE));
@@ -165,6 +209,10 @@ async function executeProductSearch(textMessage, session, responses) {
 
         if (allFound.length === 0) {
             reply(`No encontré ningún artículo para los términos buscados.\n\nIntenta con palabras más generales.`);
+            session.state = 'IDLE';
+            session.allResults = [];
+            session.searchPage = 0;
+            session.searchResults = [];
             return;
         }
 
@@ -173,7 +221,7 @@ async function executeProductSearch(textMessage, session, responses) {
         session.searchResults = allFound;
         session.state = 'SELECTING_ITEM';
 
-        const msg = msgParts.join('\n') + `\n👉 Escribe el *número* para agregar a tu cotización, o busca otra palabra.`;
+        const msg = msgParts.join('\n') + `\n👉 Escribe el *número* para agregar a tu cotización y especificar la cantidad.`;
         reply(msg);
 
     } else {
@@ -183,6 +231,10 @@ async function executeProductSearch(textMessage, session, responses) {
 
         if (results.length === 0) {
             reply(`No encontré ningún artículo que coincida con "${searchTerm}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
+            session.state = 'IDLE';
+            session.allResults = [];
+            session.searchPage = 0;
+            session.searchResults = [];
             return;
         }
 
@@ -227,11 +279,11 @@ async function processMessage(identifier, textMessage, dryRun = false) {
         if (orderQueryMatch) {
             const pedidoId = parseInt(orderQueryMatch[1], 10);
             reply(`⏳ Buscando detalles de la cotización *PE${pedidoId}*, por favor espera...`);
-            
+
             try {
                 let orderData = null;
                 let isOfflineFallback = false;
-                
+
                 try {
                     orderData = await getSqlPedidoStatus(pedidoId);
                 } catch (sqlErr) {
@@ -240,12 +292,12 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                     // Intentar desde la caché local de SQLite
                     orderData = await getLocalPedidoStatus(pedidoId);
                 }
-                
+
                 if (orderData) {
                     // Mapear el estado a un texto elegante y amigable en español
                     let estadoDecorado = '';
                     let guiaCaja = '';
-                    
+
                     switch (orderData.estado) {
                         case 'PE':
                         case 'pending':
@@ -276,14 +328,14 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                             estadoDecorado = `📌 ${orderData.estado}`;
                             guiaCaja = '';
                     }
-                    
+
                     // Formatear la fecha
                     const fechaFormat = new Date(orderData.fecha).toLocaleDateString('es-MX', {
                         day: '2-digit',
                         month: 'long',
                         year: 'numeric'
                     });
-                    
+
                     // Construir lista de artículos
                     let articulosTxt = '';
                     if (orderData.items && orderData.items.length > 0) {
@@ -291,25 +343,25 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                     } else {
                         articulosTxt = '_Sin artículos registrados en este folio._';
                     }
-                    
+
                     let responseMsg = `📦 *Detalle de Cotización PE${orderData.pedido}*\n\n`;
-                    
+
                     if (isOfflineFallback) {
                         responseMsg += `⚠️ *Nota:* Mostrando información de la caché local debido a mantenimiento técnico.\n\n`;
                     }
-                    
+
                     responseMsg += `👤 *Cliente:* ${orderData.cliente}\n`;
                     responseMsg += `📅 *Fecha:* ${fechaFormat}\n`;
                     responseMsg += `📌 *Estado:* ${estadoDecorado}\n\n`;
-                    
+
                     responseMsg += `💵 *Resumen Financiero:*\n`;
                     responseMsg += `• Subtotal: $${(orderData.importe).toFixed(2)}\n`;
                     responseMsg += `• I.V.A.: $${(orderData.impuesto).toFixed(2)}\n`;
                     responseMsg += `• *TOTAL NETO:* $${(orderData.total).toFixed(2)}\n\n`;
-                    
+
                     responseMsg += `📋 *Artículos:*\n${articulosTxt}\n`;
                     responseMsg += guiaCaja + `\n\n_Gracias por cotizar con Lopez Impresores._`;
-                    
+
                     reply(responseMsg);
                 } else {
                     reply(`🔍 No encontré ningún pedido o cotización con el folio *PE${pedidoId}*.\n\nPor favor, verifica que el número sea correcto.`);
@@ -329,14 +381,18 @@ async function processMessage(identifier, textMessage, dryRun = false) {
             if (session.state !== 'ASKING_NAME') {
                 session.state = 'ASKING_NAME';
                 await handlePromotions('WELCOME');
-                const welcomeText = `¡Hola! Bienvenido a *Lopez Impresores*.
-🌐 https://lopezimpresores.mx/
-📞 (755) 554-2478 y 554-2578
-✉️ ventas@lopezimpresores.mx
-
-Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre y apellido?`;
+                const welcomeText = `¡Hola! Bienvenido a *Lopez Impresores*.\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx\n\nPara comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre y apellido?`;
                 replyWithLogo(welcomeText);
+                return responses;
             } else {
+                // Si el bot está pidiendo el nombre y el usuario envía un saludo genérico,
+                // le recordamos que necesitamos su nombre y no cambiamos el estado.
+                const genericPhrases = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'ok', 'gracias', 'gracias!'];
+                if (genericPhrases.includes(textLower)) {
+                    reply(`¡Hola! Necesito tu nombre y apellido para poder registrarte y ofrecerte un mejor servicio. Por favor, escríbelos.`);
+                    return responses;
+                }
+
                 if (!dryRun) {
                     await createUser(identifier, textMessage);
                 } else {
@@ -346,11 +402,12 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
                 session.state = 'IDLE';
                 await handlePromotions('POST_NAME');
                 reply(`¡Gracias, ${textMessage}! Ya te hemos registrado.\n\n¿Qué artículo deseas buscar o cotizar? Escribe el nombre o parte del nombre.`);
+                return responses;
             }
         }
 
         // ─── COMANDOS DE COTIZACIÓN INTERACTIVA ────────────────────────────────
-        
+
         // 1. Ver resumen de cotización actual
         if (/^(?:ver\s*cotizaci[oó]n|cotizaci[oó]n|resumen|ver|lista)$/i.test(textLower)) {
             console.log(`[BOT-EDIT] ${identifier} solicitó ver resumen de cotización.`);
@@ -364,24 +421,24 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
         if (deleteMatch) {
             const idx = parseInt(deleteMatch[1], 10);
             const pending = dryRun ? (session.simulatedQuote || []) : await getPendingQuote(identifier);
-            
+
             console.log(`[BOT-EDIT] ${identifier} intentó eliminar artículo #${idx} de su cotización.`);
-            
+
             if (idx < 1 || idx > pending.length) {
                 reply(`❌ Número inválido. Por favor selecciona un número de artículo entre 1 y ${pending.length}.`);
                 return responses;
             }
-            
+
             const itemToDelete = pending[idx - 1];
-            
+
             if (dryRun) {
                 session.simulatedQuote.splice(idx - 1, 1);
             } else {
                 await deleteQuoteDetailById(itemToDelete.id);
             }
-            
+
             reply(`🗑️ Se ha eliminado *${itemToDelete.descrip}* de tu cotización.`);
-            
+
             const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
             reply(summary);
             return responses;
@@ -391,34 +448,64 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
         const changeQtyRegex1 = /^(?:cambiar|modificar|cantidad|set)\s+(\d+)\s*(?:a|to|=|\s)\s*(\d+)$/i;
         const changeQtyRegex2 = /^(\d+)\s*(?:a|to|=)\s*(\d+)$/i;
         const quantityMatch = textLower.match(changeQtyRegex1) || textLower.match(changeQtyRegex2);
-        
+
         if (quantityMatch) {
             const idx = parseInt(quantityMatch[1], 10);
             const newQty = parseInt(quantityMatch[2], 10);
             const pending = dryRun ? (session.simulatedQuote || []) : await getPendingQuote(identifier);
-            
+
             console.log(`[BOT-EDIT] ${identifier} intentó cambiar cantidad del artículo #${idx} a ${newQty}.`);
-            
+
             if (idx < 1 || idx > pending.length) {
                 reply(`❌ Número inválido. Por favor selecciona un número de artículo entre 1 y ${pending.length}.`);
                 return responses;
             }
-            
+
             if (isNaN(newQty) || newQty <= 0) {
                 reply(`❌ Por favor ingresa una cantidad válida mayor a 0.`);
                 return responses;
             }
-            
+
             const itemToUpdate = pending[idx - 1];
-            
-            if (dryRun) {
-                itemToUpdate.cantidad = newQty;
-            } else {
-                await updateQuoteDetailQuantityById(itemToUpdate.id, newQty);
+
+            // Recalcular precio según umbrales si es posible
+            try {
+                // Determinar impuesto (puede venir en minúsculas desde SQLite)
+                // No asumir 'IVA' por defecto: si el campo es null/undefined, respetar exención
+                const impuesto = itemToUpdate.impuesto ?? itemToUpdate.IMPUESTO ?? null;
+
+                // Intentar obtener el producto para acceder a PRECIO/C umbrales
+                const prod = await getProductByArticulo(itemToUpdate.articulo);
+
+                let precioBase = itemToUpdate.precio_unitario;
+                if (prod) {
+                    const { price } = selectPriceByQuantity(prod, newQty);
+                    precioBase = price;
+                }
+
+                const { totalUnitario, montoIva } = calcularIva(precioBase, impuesto);
+
+                if (dryRun) {
+                    itemToUpdate.cantidad = newQty;
+                    itemToUpdate.precio_unitario = precioBase;
+                    itemToUpdate.monto_iva = montoIva;
+                    itemToUpdate.total_unitario = totalUnitario;
+                } else {
+                    await updateQuoteDetailPriceById(itemToUpdate.id, newQty, precioBase, montoIva, totalUnitario);
+                }
+
+                reply(`✏️ Se actualizó la cantidad de *${itemToUpdate.descrip}* a *${newQty}*.`);
+            } catch (err) {
+                console.error('Error al recalcular precio al cambiar cantidad:', err);
+                // Fallback: solo actualizar cantidad
+                if (dryRun) {
+                    itemToUpdate.cantidad = newQty;
+                } else {
+                    await updateQuoteDetailQuantityById(itemToUpdate.id, newQty);
+                }
+                reply(`✏️ Se actualizó la cantidad de *${itemToUpdate.descrip}* a *${newQty}*.`);
             }
-            
-            reply(`✏️ Se actualizó la cantidad de *${itemToUpdate.descrip}* a *${newQty}*.`);
-            
+
             const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
             reply(summary);
             return responses;
@@ -500,7 +587,7 @@ Para comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre 
             } else {
                 session.simulatedQuote = [];
             }
-            
+
             await handlePromotions('WELCOME');
 
             const returnWelcomeText = `¡Hola de nuevo, ${user.name}! 👋 Bienvenido a *Lopez Impresores*.
@@ -538,7 +625,7 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     reply(buildResultsPage(session));
                 }
 
-            // Detectar selección múltiple o simple (ej. "1, 4, 8" o "1 y 4")
+                // Detectar selección múltiple o simple (ej. "1, 4, 8" o "1 y 4")
             } else if (/^[0-9\s,y\-]+$/i.test(textMessage.trim())) {
                 const numbers = textMessage.match(/\d+/g);
                 const indices = numbers ? numbers.map(n => parseInt(n, 10)) : [];
@@ -550,45 +637,56 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     // Tomar el primer artículo de la cola
                     session.selectedItem = session.selectionQueue.shift();
                     session.state = 'ASKING_QUANTITY';
-                    
+
                     reply(`Has seleccionado: *${session.selectedItem.DESCRIP}*\n\n¿Qué *cantidad* deseas agregar? (Escribe un número)`);
                 } else {
                     reply('Los números seleccionados no se encuentran en la lista actual de resultados. Intenta de nuevo o escribe otra palabra para buscar.');
                 }
 
-            // No es número válido → nueva búsqueda
+                // No es número válido → nueva búsqueda
             } else {
                 await executeProductSearch(textMessage, session, responses);
             }
 
         } else if (session.state === 'ASKING_QUANTITY') {
             const cantidad = parseInt(textMessage, 10);
-            if (!isNaN(cantidad) && cantidad > 0) {
-                const item = session.selectedItem;
-                const precioBase = item.PRECIO1;
-                const totalUnitario = item.IMPUESTO === 'IVA' ? Math.ceil(precioBase * 1.16) : precioBase;
-                const montoIva = totalUnitario - precioBase;
 
-                if (!dryRun) {
-                    // Si es el primer ítem que agrega, mostrar promo PRE_QUOTE
-                    const pending = await getPendingQuote(identifier);
-                    if (pending.length === 0) {
-                        await handlePromotions('PRE_QUOTE');
+                if (!isNaN(cantidad) && cantidad > 0) {
+                    const item = session.selectedItem;
+
+                    // Seleccionar precio según cantidad (PRECIO1..PRECIO10 y umbrales C2..C10)
+                    const { price: precioBase, priceLevel, matchedC, matchedIndex } = selectPriceByQuantity(item, cantidad);
+                    const { totalUnitario, montoIva } = calcularIva(precioBase, item.IMPUESTO);
+
+                    // Mostrar en consola el precio y el nivel usado (no persistir en DB)
+                    try {
+                        const cInfo = matchedC ? `umbral C${matchedIndex}=${matchedC}` : 'sin umbral (PRECIO1)';
+                        console.log(`[PRICING] Artículo ${item.ARTICULO} - qty=${cantidad} -> precio=${precioBase} (${priceLevel}), ${cInfo}`);
+                    } catch (logErr) {
+                        console.error('[PRICING] Error imprimiendo log de pricing:', logErr);
                     }
-                    await addItemToQuote(identifier, item.ARTICULO, item.DESCRIP, cantidad, precioBase, montoIva, totalUnitario, item.IMPUESTO);
-                } else {
-                    // Acumular ítems en memoria para poder generar el PDF de prueba
-                    if (!session.simulatedQuote) session.simulatedQuote = [];
-                    session.simulatedQuote.push({
-                        articulo: item.ARTICULO,
-                        descrip:  item.DESCRIP,
-                        cantidad,
-                        precio_unitario: precioBase,
-                        monto_iva: montoIva,
-                        total_unitario: totalUnitario,
-                        impuesto: item.IMPUESTO
-                    });
-                }
+
+                    if (!dryRun) {
+                        // Si es el primer ítem que agrega, mostrar promo PRE_QUOTE
+                        const pending = await getPendingQuote(identifier);
+                        if (pending.length === 0) {
+                            await handlePromotions('PRE_QUOTE');
+                        }
+                        await addItemToQuote(identifier, item.ARTICULO, item.DESCRIP, cantidad, precioBase, montoIva, totalUnitario, item.IMPUESTO);
+                    } else {
+                        // Acumular ítems en memoria para poder generar el PDF de prueba
+                        if (!session.simulatedQuote) session.simulatedQuote = [];
+                        session.simulatedQuote.push({
+                            articulo: item.ARTICULO,
+                            descrip: item.DESCRIP,
+                            cantidad,
+                            precio_unitario: precioBase,
+                            monto_iva: montoIva,
+                            total_unitario: totalUnitario,
+                            impuesto: item.IMPUESTO
+                        });
+                    }
+
 
                 // Si hay más elementos en la cola
                 if (session.selectionQueue && session.selectionQueue.length > 0) {
@@ -601,12 +699,12 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     session.selectedItem = null;
                     session.searchResults = [];
                     session.selectionQueue = [];
-                    
+
                     const summary = await formatQuoteSummary(identifier, dryRun ? session.simulatedQuote : null);
                     reply(`✅ Se agregaron tus artículos seleccionados a la cotización.\n\n${summary}`);
                 }
             } else {
-                reply('Por favor, escribe una cantidad válida (un número mayor a 0).');
+                reply(`❌ Cantidad inválida. Si deseas agregar *${session.selectedItem.DESCRIP}*, por favor, escribe un número mayor a 0.\n\nSi quieres buscar otro artículo, simplemente escríbelo.`);
             }
         }
 
@@ -647,13 +745,13 @@ async function startBot() {
             botState.qr = null;
             const statusCode = (lastDisconnect.error)?.output?.statusCode;
             const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-            
+
             console.log(`[BOT-CONN] Conexión cerrada. Código de estado: ${statusCode || 'desconocido'}`);
-            
+
             if (isLoggedOut) {
                 console.log('🚪 [BOT-CONN] Sesión desvinculada por el usuario o revocada. Limpiando credenciales antiguas...');
                 botState.hasConnected = false;
-                
+
                 try {
                     if (fs.existsSync(authDir)) {
                         fs.rmSync(authDir, { recursive: true, force: true });
@@ -662,7 +760,7 @@ async function startBot() {
                 } catch (err) {
                     console.error('❌ [BOT-CONN] Error al eliminar la carpeta de sesión:', err.message);
                 }
-                
+
                 console.log('🔄 [BOT-CONN] Reiniciando motor en 3 segundos para generar nuevo código QR...');
                 setTimeout(startBot, 3000);
             } else {
@@ -745,10 +843,10 @@ async function startBot() {
 async function sendBroadcast(sock, clients, text, imagePath) {
     if (!sock) throw new Error('Bot no conectado');
     console.log(`[CAMPAÑA] Iniciando envío masivo a ${clients.length} clientes registrados.`);
-    
+
     for (const client of clients) {
         const jid = client.phone.includes('@') ? client.phone : `${client.phone}@s.whatsapp.net`;
-        
+
         // No enviar al simulador
         if (jid.includes('simulator')) {
             console.log(`[CAMPAÑA] Saltando contacto de simulador: ${jid}`);
@@ -758,19 +856,19 @@ async function sendBroadcast(sock, clients, text, imagePath) {
         try {
             console.log(`[CAMPAÑA] Intentando enviar a: ${jid}...`);
             const personalizedText = text.replace(/\[nombre\]/gi, client.name || 'Cliente');
-            
+
             if (imagePath) {
                 const absolutePath = path.join(__dirname, imagePath);
                 await sock.sendMessage(jid, { image: { url: absolutePath }, caption: personalizedText });
             } else {
                 await sock.sendMessage(jid, { text: personalizedText });
             }
-            
+
             console.log(`[CAMPAÑA] ✅ Mensaje enviado correctamente a: ${jid}`);
-            
+
             const delay = Math.floor(Math.random() * 4000) + 4000;
             await new Promise(resolve => setTimeout(resolve, delay));
-            
+
         } catch (err) {
             console.error(`[CAMPAÑA] ❌ Error enviando a ${jid}:`, err);
         }
