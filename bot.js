@@ -103,57 +103,36 @@ async function executeProductSearch(textMessage, session, responses) {
         .map(t => t.trim())
         .filter(t => t.length >= 3);
 
+    let allResults = [];
     if (terms.length > 1) {
-        // Búsqueda múltiple — una por cada término
-        let allFound = [];
-        let msgParts = [];
-        let offset = 0;
-
+        // Búsqueda múltiple — combinamos todos los resultados deduplicando por código
+        const seen = new Set();
         for (const term of terms) {
             const results = await searchProducts(term);
-            if (results.length === 0) {
-                msgParts.push(`🔍 *"${term}"*: sin resultados.`);
-            } else {
-                let section = `🔍 *"${term}"* (${results.length} encontrados):\n`;
-                results.slice(0, PAGE_SIZE).forEach((r, i) => {
-                    const precioFinal = r.IMPUESTO === 'IVA' ? Math.ceil(r.PRECIO1 * 1.16) : r.PRECIO1;
-                    section += `*${offset + i + 1}.* ${r.DESCRIP} - $${precioFinal.toFixed(2)}\n`;
-                });
-                msgParts.push(section);
-                allFound = allFound.concat(results.slice(0, PAGE_SIZE));
-                offset += results.slice(0, PAGE_SIZE).length;
+            for (const r of results) {
+                if (!seen.has(r.ARTICULO)) {
+                    seen.add(r.ARTICULO);
+                    allResults.push(r);
+                }
             }
         }
-
-        if (allFound.length === 0) {
-            reply(`No encontré ningún artículo para los términos buscados.\n\nIntenta con palabras más generales.`);
-            return;
-        }
-
-        session.allResults = allFound;
-        session.searchPage = 0;
-        session.searchResults = allFound;
-        session.state = 'SELECTING_ITEM';
-
-        const msg = msgParts.join('\n') + `\n👉 Escribe el *número* para agregar a tu cotización, o busca otra palabra.`;
-        reply(msg);
-
     } else {
-        // Búsqueda simple — flujo normal con paginación
+        // Búsqueda simple — flujo normal
         const searchTerm = terms[0] || textMessage;
-        const results = await searchProducts(searchTerm);
-
-        if (results.length === 0) {
-            reply(`No encontré ningún artículo que coincida con "${searchTerm}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
-            return;
-        }
-
-        session.allResults = results;
-        session.searchPage = 0;
-        session.state = 'SELECTING_ITEM';
-
-        reply(buildResultsPage(session));
+        allResults = await searchProducts(searchTerm);
     }
+
+    if (allResults.length === 0) {
+        const queryText = terms.length > 1 ? terms.join(', ') : (terms[0] || textMessage);
+        reply(`No encontré ningún artículo que coincida con "${queryText}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
+        return;
+    }
+
+    session.allResults = allResults;
+    session.searchPage = 0;
+    session.state = 'SELECTING_ITEM';
+
+    reply(buildResultsPage(session));
 }
 
 async function processMessage(identifier, textMessage, dryRun = false) {
