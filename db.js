@@ -61,7 +61,7 @@ async function searchProducts(searchTerm) {
             return `[DESCRIP] LIKE @term${i} COLLATE Latin1_General_CI_AI`;
         });
         const result = await request.query(`
-            SELECT [ARTICULO], [DESCRIP], [PRECIO1], [IMPUESTO]
+            SELECT [ARTICULO], [DESCRIP], [PRECIO1], [PRECIO2], [PRECIO3], [PRECIO4], [PRECIO5], [PRECIO6], [PRECIO7], [PRECIO8], [PRECIO9], [PRECIO10], [IMPUESTO], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10]
             FROM prods
             WHERE ${conditions.join(' AND ')}
             ORDER BY [DESCRIP]
@@ -275,6 +275,53 @@ async function deleteSqlPedido(pedidoId) {
     }
 }
 
+async function getSqlPedidoStatus(pedidoId) {
+    try {
+        const pool = await connectToDatabase();
+        
+        // 1. Obtener la cabecera del pedido
+        const headerRequest = pool.request();
+        headerRequest.input('pedido', sql.Int, pedidoId);
+        const headerResult = await headerRequest.query(`
+            SELECT [pedido], [F_EMISION], [DATOS], [CLIENTE], [IMPORTE], [IMPUESTO], [ESTADO]
+            FROM pedidos
+            WHERE [pedido] = @pedido
+        `);
+        
+        if (headerResult.recordset.length === 0) {
+            return null; // No encontrado
+        }
+        
+        const header = headerResult.recordset[0];
+        
+        // 2. Obtener las partidas (artículos) del pedido
+        const itemsRequest = pool.request();
+        itemsRequest.input('pedido', sql.Int, pedidoId);
+        const itemsResult = await itemsRequest.query(`
+            SELECT [CANTIDAD], [PRDESCRIP], [OBSERV]
+            FROM pedpar
+            WHERE [pedido] = @pedido
+        `);
+        
+        return {
+            pedido: header.pedido,
+            fecha: header.F_EMISION,
+            cliente: header.DATOS || header.CLIENTE,
+            importe: header.IMPORTE || 0,
+            impuesto: header.IMPUESTO || 0,
+            total: (header.IMPORTE || 0) + (header.IMPUESTO || 0),
+            estado: header.ESTADO ? header.ESTADO.trim() : 'PE',
+            items: itemsResult.recordset.map(row => ({
+                cantidad: row.CANTIDAD,
+                descripcion: row.PRDESCRIP ? row.PRDESCRIP.trim() : (row.OBSERV ? row.OBSERV.trim() : 'Sin descripción')
+            }))
+        };
+    } catch (err) {
+        console.error(`Error al obtener estado de pedido ${pedidoId} en MS SQL:`, err);
+        throw err;
+    }
+}
+
 module.exports = {
     sql,
     connectToDatabase,
@@ -282,6 +329,8 @@ module.exports = {
     searchProducts,
     createSqlClient,
     createSqlPedido,
-    deleteSqlPedido
+    deleteSqlPedido,
+    getSqlPedidoStatus
 };
+
 

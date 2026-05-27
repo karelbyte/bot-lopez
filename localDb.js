@@ -74,7 +74,25 @@ async function getLocalDb() {
                     articulo TEXT PRIMARY KEY,
                     descrip TEXT NOT NULL,
                     precio1 REAL NOT NULL,
+                    precio2 REAL,
+                    precio3 REAL,
+                    precio4 REAL,
+                    precio5 REAL,
+                    precio6 REAL,
+                    precio7 REAL,
+                    precio8 REAL,
+                    precio9 REAL,
+                    precio10 REAL,
                     impuesto TEXT,
+                    c2 TEXT,
+                    c3 TEXT,
+                    c4 TEXT,
+                    c5 TEXT,
+                    c6 TEXT,
+                    c7 TEXT,
+                    c8 TEXT,
+                    c9 TEXT,
+                    c10 TEXT,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
             `);
@@ -315,16 +333,34 @@ async function getAnalyticsStats() {
 async function upsertProducts(products) {
     const db = await getLocalDb();
     const stmt = await db.prepare(
-        `INSERT INTO products (articulo, descrip, precio1, impuesto, updated_at)
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO products (articulo, descrip, precio1, precio2, precio3, precio4, precio5, precio6, precio7, precio8, precio9, precio10, impuesto, c2, c3, c4, c5, c6, c7, c8, c9, c10, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(articulo) DO UPDATE SET
              descrip    = excluded.descrip,
              precio1    = excluded.precio1,
+             precio2    = excluded.precio2,
+             precio3    = excluded.precio3,
+             precio4    = excluded.precio4,
+             precio5    = excluded.precio5,
+             precio6    = excluded.precio6,
+             precio7    = excluded.precio7,
+             precio8    = excluded.precio8,
+             precio9    = excluded.precio9,
+             precio10   = excluded.precio10,
              impuesto   = excluded.impuesto,
+             c2         = excluded.c2,
+             c3         = excluded.c3,
+             c4         = excluded.c4,
+             c5         = excluded.c5,
+             c6         = excluded.c6,
+             c7         = excluded.c7,
+             c8         = excluded.c8,
+             c9         = excluded.c9,
+             c10        = excluded.c10,
              updated_at = CURRENT_TIMESTAMP`
     );
     for (const p of products) {
-        await stmt.run(p.ARTICULO, p.DESCRIP, p.PRECIO1, p.IMPUESTO || null);
+        await stmt.run(p.ARTICULO, p.DESCRIP, p.PRECIO1 || 0, p.PRECIO2 || null, p.PRECIO3 || null, p.PRECIO4 || null, p.PRECIO5 || null, p.PRECIO6 || null, p.PRECIO7 || null, p.PRECIO8 || null, p.PRECIO9 || null, p.PRECIO10 || null, p.IMPUESTO || null, p.C2 || null, p.C3 || null, p.C4 || null, p.C5 || null, p.C6 || null, p.C7 || null, p.C8 || null, p.C9 || null, p.C10 || null);
     }
     await stmt.finalize();
 }
@@ -335,7 +371,7 @@ async function searchProductsLocal(searchTerm) {
     const conditions = words.map(() => 'descrip LIKE ?').join(' AND ');
     const params = words.map(w => `%${w}%`);
     return db.all(
-        `SELECT articulo as ARTICULO, descrip as DESCRIP, precio1 as PRECIO1, impuesto as IMPUESTO
+        `SELECT articulo as ARTICULO, descrip as DESCRIP, precio1 as PRECIO1, precio2 as PRECIO2, precio3 as PRECIO3, precio4 as PRECIO4, precio5 as PRECIO5, precio6 as PRECIO6, precio7 as PRECIO7, precio8 as PRECIO8, precio9 as PRECIO9, precio10 as PRECIO10, impuesto as IMPUESTO, c2 as C2, c3 as C3, c4 as C4, c5 as C5, c6 as C6, c7 as C7, c8 as C8, c9 as C9, c10 as C10
          FROM products WHERE ${conditions} ORDER BY descrip`,
         params
     );
@@ -391,6 +427,132 @@ async function deleteQuote(id) {
     return db.run('DELETE FROM quotes WHERE id = ?', [id]);
 }
 
+async function getLocalPedidoStatus(sqlPedidoId) {
+    try {
+        const db = await getLocalDb();
+        // 1. Obtener la cabecera de la cotización local por sql_pedido_id
+        const quote = await db.get(`
+            SELECT q.id, q.created_at, q.status, q.synced, q.sql_pedido_id, c.name as client_name
+            FROM quotes q
+            JOIN clients c ON c.phone = q.client_phone
+            WHERE q.sql_pedido_id = ?
+        `, [sqlPedidoId]);
+        
+        if (!quote) return null;
+        
+        // 2. Obtener los detalles de la cotización local
+        const details = await db.all(`
+            SELECT cantidad, descrip, precio_unitario, monto_iva, total_unitario
+            FROM quote_details
+            WHERE quote_id = ?
+        `, [quote.id]);
+        
+        let subtotal = 0;
+        let iva = 0;
+        let total = 0;
+        
+        const items = details.map(d => {
+            const qty = d.cantidad || 0;
+            const price = d.precio_unitario || 0;
+            const tax = d.monto_iva || 0;
+            const unitTotal = d.total_unitario || 0;
+            
+            subtotal += price * qty;
+            iva += tax * qty;
+            total += unitTotal * qty;
+            
+            return {
+                cantidad: qty,
+                descripcion: d.descrip ? d.descrip.trim() : 'Sin descripción'
+            };
+        });
+        
+        return {
+            pedido: quote.sql_pedido_id,
+            fecha: quote.created_at,
+            cliente: quote.client_name || 'Cliente local',
+            importe: subtotal,
+            impuesto: iva,
+            total: total,
+            estado: 'PE', // En caché local asumimos Cotizado / Pendiente de Caja (PE)
+            items: items,
+            isLocalCache: true
+        };
+    } catch (error) {
+        console.error('Error al obtener status de pedido local:', error);
+        return null;
+    }
+}
+
+async function deleteQuoteDetailById(detailId) {
+    try {
+        const db = await getLocalDb();
+        await db.run('DELETE FROM quote_details WHERE id = ?', [detailId]);
+        console.log(`[DB-QUOTE] Detalle de cotización eliminado: ID ${detailId}`);
+    } catch (err) {
+        console.error(`Error al eliminar detalle de cotización ID ${detailId}:`, err);
+        throw err;
+    }
+}
+
+async function updateQuoteDetailQuantityById(detailId, quantity) {
+    try {
+        const db = await getLocalDb();
+        await db.run('UPDATE quote_details SET cantidad = ? WHERE id = ?', [quantity, detailId]);
+        console.log(`[DB-QUOTE] Cantidad de detalle de cotización actualizada: ID ${detailId} -> ${quantity}`);
+    } catch (err) {
+        console.error(`Error al actualizar cantidad de detalle de cotización ID ${detailId}:`, err);
+        throw err;
+    }
+}
+
+async function updateQuoteDetailPriceById(detailId, quantity, precio_unitario, monto_iva, total_unitario) {
+    try {
+        const db = await getLocalDb();
+        await db.run('UPDATE quote_details SET cantidad = ?, precio_unitario = ?, monto_iva = ?, total_unitario = ? WHERE id = ?', [quantity, precio_unitario, monto_iva, total_unitario, detailId]);
+        console.log(`[DB-QUOTE] Detalle de cotización actualizado: ID ${detailId} -> qty=${quantity}, precio_unitario=${precio_unitario}`);
+    } catch (err) {
+        console.error(`Error al actualizar precio de detalle de cotización ID ${detailId}:`, err);
+        throw err;
+    }
+}
+
+async function getProductByArticulo(articulo) {
+    try {
+        const db = await getLocalDb();
+        const row = await db.get('SELECT * FROM products WHERE articulo = ?', [articulo]);
+        if (!row) return null;
+        // Map to uppercase keys expected by bot.js selectPriceByQuantity
+        return {
+            ARTICULO: row.articulo,
+            DESCRIP: row.descrip,
+            PRECIO1: row.precio1,
+            PRECIO2: row.precio2,
+            PRECIO3: row.precio3,
+            PRECIO4: row.precio4,
+            PRECIO5: row.precio5,
+            PRECIO6: row.precio6,
+            PRECIO7: row.precio7,
+            PRECIO8: row.precio8,
+            PRECIO9: row.precio9,
+            PRECIO10: row.precio10,
+            IMPUESTO: row.impuesto,
+            C2: row.c2,
+            C3: row.c3,
+            C4: row.c4,
+            C5: row.c5,
+            C6: row.c6,
+            C7: row.c7,
+            C8: row.c8,
+            C9: row.c9,
+            C10: row.c10
+        };
+    } catch (err) {
+        console.error('Error al obtener producto por articulo:', err);
+        return null;
+    }
+}
+
 module.exports = {
     getLocalDb,
     getUser,
@@ -420,5 +582,11 @@ module.exports = {
     getProductsCount,
     saveLog,
     getLogs,
-    clearLogs
+    clearLogs,
+    getLocalPedidoStatus,
+    deleteQuoteDetailById,
+    updateQuoteDetailQuantityById,
+    updateQuoteDetailPriceById,
+    getProductByArticulo
 };
+
