@@ -3,7 +3,7 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido, getSqlPedidoStatus } = require('./db.js');
-const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog, getLocalPedidoStatus, deleteQuoteDetailById, updateQuoteDetailQuantityById, updateQuoteDetailPriceById, getProductByArticulo } = require('./localDb.js');
+const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog, getLocalPedidoStatus, deleteQuoteDetailById, updateQuoteDetailQuantityById, updateQuoteDetailPriceById, getProductByArticulo, getActiveManual } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
 
 const botState = {
@@ -355,6 +355,17 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                 await handlePromotions('WELCOME');
                 const welcomeText = `¡Hola! Bienvenido a *Lopez Impresores*.\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx\n\nPara comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre y apellido?`;
                 replyWithLogo(welcomeText);
+
+                const activeManual = await getActiveManual();
+                if (activeManual) {
+                    responses.push({
+                        type: 'pdf',
+                        pdfPath: path.join(__dirname, activeManual.filepath),
+                        text: 'Manual de uso',
+                        fileName: activeManual.filename
+                    });
+                }
+
                 return responses;
             } else {
                 // Si el bot está pidiendo el nombre y el usuario envía un saludo genérico,
@@ -570,6 +581,17 @@ async function processMessage(identifier, textMessage, dryRun = false) {
 👉 Escribe el nombre o clave de un artículo para buscarlo en nuestro inventario.
 _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
             replyWithLogo(returnWelcomeText);
+
+            const activeManual = await getActiveManual();
+            if (activeManual) {
+                responses.push({
+                    type: 'pdf',
+                    pdfPath: path.join(__dirname, activeManual.filepath),
+                    text: 'Manual de uso',
+                    fileName: activeManual.filename
+                });
+            }
+
             return responses;
         }
 
@@ -794,7 +816,8 @@ async function startBot() {
                     const dd = String(now.getDate()).padStart(2, '0');
                     const mm = String(now.getMonth() + 1).padStart(2, '0');
                     const yyyy = now.getFullYear();
-                    const pdfFileName = `Cotizacion_Lopez_Impresores_${dd}_${mm}_${yyyy}.pdf`;
+                    const defaultPdfName = `Cotizacion_Lopez_Impresores_${dd}_${mm}_${yyyy}.pdf`;
+                    const pdfFileName = res.fileName || defaultPdfName;
                     await sock.sendMessage(from, {
                         document: { url: res.pdfPath },
                         mimetype: 'application/pdf',

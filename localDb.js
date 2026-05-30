@@ -95,6 +95,14 @@ async function getLocalDb() {
                     c10 TEXT,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS manuals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT,
+                    filepath TEXT,
+                    active INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
             `);
 
             // Migraciones: agregar columnas nuevas a tablas existentes si no existen
@@ -553,6 +561,72 @@ async function getProductByArticulo(articulo) {
     }
 }
 
+async function getActiveManual() {
+    try {
+        const db = await getLocalDb();
+        return await db.get('SELECT * FROM manuals WHERE active = 1 ORDER BY id DESC LIMIT 1');
+    } catch (err) {
+        console.error('Error al obtener el manual activo:', err);
+        return null;
+    }
+}
+
+async function getAllManuals() {
+    try {
+        const db = await getLocalDb();
+        return await db.all('SELECT * FROM manuals ORDER BY created_at DESC');
+    } catch (err) {
+        console.error('Error al obtener todos los manuales:', err);
+        return [];
+    }
+}
+
+async function addManual(filename, filepath, active) {
+    try {
+        const db = await getLocalDb();
+        const activeVal = active ? 1 : 0;
+        if (activeVal === 1) {
+            await db.run('UPDATE manuals SET active = 0');
+        }
+        const result = await db.run(
+            'INSERT INTO manuals (filename, filepath, active) VALUES (?, ?, ?)',
+            [filename, filepath, activeVal]
+        );
+        return result.lastID;
+    } catch (err) {
+        console.error('Error al agregar el manual:', err);
+        throw err;
+    }
+}
+
+async function updateManualStatus(id, active) {
+    try {
+        const db = await getLocalDb();
+        const activeVal = active ? 1 : 0;
+        if (activeVal === 1) {
+            await db.run('UPDATE manuals SET active = 0');
+        }
+        await db.run('UPDATE manuals SET active = ? WHERE id = ?', [activeVal, id]);
+    } catch (err) {
+        console.error(`Error al actualizar estado del manual ID ${id}:`, err);
+        throw err;
+    }
+}
+
+async function deleteManual(id) {
+    try {
+        const db = await getLocalDb();
+        const manual = await db.get('SELECT * FROM manuals WHERE id = ?', [id]);
+        if (manual) {
+            await db.run('DELETE FROM manuals WHERE id = ?', [id]);
+        }
+        return manual;
+    } catch (err) {
+        console.error(`Error al eliminar el manual ID ${id}:`, err);
+        throw err;
+    }
+}
+
 module.exports = {
     getLocalDb,
     getUser,
@@ -587,6 +661,11 @@ module.exports = {
     deleteQuoteDetailById,
     updateQuoteDetailQuantityById,
     updateQuoteDetailPriceById,
-    getProductByArticulo
+    getProductByArticulo,
+    getActiveManual,
+    getAllManuals,
+    addManual,
+    updateManualStatus,
+    deleteManual
 };
 

@@ -42,11 +42,21 @@
 
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(1, 1fr);
             gap: 25px;
-            width: 90%;
-            max-width: 1000px;
+            width: 95%;
+            max-width: 1200px;
             margin-bottom: 50px;
+        }
+        @media (min-width: 600px) {
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media (min-width: 1024px) {
+            .grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
         }
 
         .hub-card {
@@ -190,6 +200,14 @@
         <p>Actualiza manualmente el catálogo de productos desde MS SQL a la caché local.</p>
         <span class="btn-main">Sincronizar ahora</span>
     </div>
+
+    <!-- Card: Manual -->
+    <a href="/manual" class="hub-card">
+        <div class="icon">📖</div>
+        <h2>Manual de Uso</h2>
+        <p>Gestiona el manual en PDF que se entrega automáticamente a los clientes al saludar.</p>
+        <span class="btn-main">Administrar</span>
+    </a>
 
     <!-- Card: Campañas 
     <a href="/campaigns" class="hub-card">

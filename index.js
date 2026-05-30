@@ -4,7 +4,7 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const { startBot, botState, processMessage, userSessions, sendBroadcast } = require('./bot.js');
-const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, saveLog, getLogs, clearLogs, getAllQuotes, getQuoteDetailsById, deleteQuote } = require('./localDb.js');
+const { getAllPromotions, addPromotion, updatePromotion, deletePromotion, getAnalyticsStats, getAllClients, addCampaign, getAllCampaigns, deleteCampaign, saveLog, getLogs, clearLogs, getAllQuotes, getQuoteDetailsById, deleteQuote, getActiveManual, getAllManuals, addManual, updateManualStatus, deleteManual } = require('./localDb.js');
 const { startSyncTask, syncProducts } = require('./syncTask.js');
 const { deleteSqlPedido } = require('./db.js');
 const multer = require('multer');
@@ -20,6 +20,27 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({ storage });
+
+const manualStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = path.join(__dirname, 'manuals');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+const uploadManual = multer({
+    storage: manualStorage,
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Solo se permiten archivos PDF'), false);
+        }
+    }
+});
 
 const app = express();
 const PORT = process.env.QR_WEB_PORT || 80;
@@ -252,7 +273,9 @@ app.post('/chat', async (req, res) => {
         const output = responses.map(r => {
             if (r.type === 'pdf') {
                 const fileName = path.basename(r.pdfPath);
-                return { type: 'pdf', text: r.text, url: `/quotes_pdfs/${fileName}` };
+                const isManual = r.pdfPath.includes('manuals');
+                const folder = isManual ? 'manuals' : 'quotes_pdfs';
+                return { type: 'pdf', text: r.text, url: `/${folder}/${fileName}` };
             }
             // Importante: incluir la URL para imágenes para que el simulador las muestre
             return { type: r.type, text: r.text, url: r.url };
@@ -267,6 +290,62 @@ app.post('/chat', async (req, res) => {
 
 // Servir PDFs generados para el simulador
 app.use('/quotes_pdfs', express.static(path.join(__dirname, 'quotes_pdfs')));
+app.use('/manuals', express.static(path.join(__dirname, 'manuals')));
+
+// ─── Manual de Uso ──────────────────────────────────────────────────────────
+app.get('/manual', (req, res) => {
+    res.sendFile(path.join(__dirname, 'manual.html'));
+});
+
+app.get('/api/manuals', async (req, res) => {
+    try {
+        const manuals = await getAllManuals();
+        res.json(manuals);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/manuals', uploadManual.single('manual'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'El archivo PDF es obligatorio.' });
+        }
+        const filename = req.file.originalname;
+        const filepath = `manuals/${req.file.filename}`; // relative path
+        const active = req.body.active === 'true' || req.body.active === '1' ? 1 : 0;
+
+        await addManual(filename, filepath, active);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.patch('/api/manuals/:id', async (req, res) => {
+    try {
+        const { active } = req.body;
+        await updateManualStatus(req.params.id, active);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/manuals/:id', async (req, res) => {
+    try {
+        const manual = await deleteManual(req.params.id);
+        if (manual && manual.filepath) {
+            const absolutePath = path.join(__dirname, manual.filepath);
+            if (fs.existsSync(absolutePath)) {
+                fs.unlinkSync(absolutePath);
+            }
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // ─── Simulador: UI ────────────────────────────────────────────────────────────
 app.get('/simulator', (_req, res) => {
