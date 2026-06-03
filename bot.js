@@ -5,6 +5,7 @@ const fs = require('fs');
 const { connectToDatabase, searchProducts, createSqlClient, createSqlPedido, getSqlPedidoStatus } = require('./db.js');
 const { getUser, createUser, updateUserCode, addItemToQuote, getPendingQuote, finalizeQuote, clearPendingQuote, getActivePromotions, saveLog, getLocalPedidoStatus, deleteQuoteDetailById, updateQuoteDetailQuantityById, updateQuoteDetailPriceById, getProductByArticulo, getActiveManual } = require('./localDb.js');
 const { generateQuotePdf } = require('./pdfGenerator.js');
+const { cleanSearchQuery } = require('./singularize.js');
 
 const botState = {
     qr: null,
@@ -180,9 +181,10 @@ async function formatQuoteSummary(identifier, simulatedQuote = null) {
  */
 async function executeProductSearch(textMessage, session, responses) {
     const reply = (text) => responses.push({ type: 'text', text });
+    const cleanedMessage = cleanSearchQuery(textMessage)
 
     // Detectar si el cliente envió una lista separada por comas
-    const terms = textMessage.split(',')
+    const terms = cleanedMessage.split(',')
         .map(t => t.trim())
         .filter(t => t.length >= 3);
 
@@ -201,12 +203,12 @@ async function executeProductSearch(textMessage, session, responses) {
         }
     } else {
         // Búsqueda simple — flujo normal
-        const searchTerm = terms[0] || textMessage;
+        const searchTerm = terms[0] || cleanedMessage;
         allResults = await searchProducts(searchTerm);
     }
 
     if (allResults.length === 0) {
-        const queryText = terms.length > 1 ? terms.join(', ') : (terms[0] || textMessage);
+        const queryText = terms.length > 1 ? terms.join(', ') : (terms[0] || cleanedMessage);
         reply(`No encontré ningún artículo que coincida con "${queryText}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
         return;
     }

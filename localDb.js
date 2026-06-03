@@ -1,5 +1,6 @@
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
+const { expandTerms } = require('./singularize.js');
 
 let dbPromise = null;
 
@@ -375,9 +376,15 @@ async function upsertProducts(products) {
 
 async function searchProductsLocal(searchTerm) {
     const db = await getLocalDb();
-    const words = searchTerm.trim().split(/\s+/).filter(w => w.length > 0);
-    const conditions = words.map(() => 'descrip LIKE ?').join(' AND ');
-    const params = words.map(w => `%${w}%`);
+    const groups = expandTerms(searchTerm);
+    const params = [];
+    const conditions = groups.map(group => {
+        const orClauses = group.map(word => {
+            params.push(`%${word}%`);
+            return 'descrip LIKE ?';
+        });
+        return '(' + orClauses.join(' OR ') + ')';
+    });
     return db.all(
         `SELECT articulo as ARTICULO, descrip as DESCRIP, precio1 as PRECIO1, precio2 as PRECIO2, precio3 as PRECIO3, precio4 as PRECIO4, precio5 as PRECIO5, precio6 as PRECIO6, precio7 as PRECIO7, precio8 as PRECIO8, precio9 as PRECIO9, precio10 as PRECIO10, impuesto as IMPUESTO, c2 as C2, c3 as C3, c4 as C4, c5 as C5, c6 as C6, c7 as C7, c8 as C8, c9 as C9, c10 as C10
          FROM products WHERE ${conditions} ORDER BY descrip`,

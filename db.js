@@ -1,6 +1,7 @@
 require('dotenv').config();
 const sql = require('mssql');
 const { saveLog, searchProductsLocal } = require('./localDb.js');
+const { expandTerms } = require('./singularize.js');
 
 const dbConfig = {
     user: process.env.DB_USER,
@@ -52,13 +53,19 @@ async function query(queryString) {
 }
 
 async function searchProducts(searchTerm) {
-    try {
+        try {
         const pool = await connectToDatabase();
         const words = searchTerm.trim().split(/\s+/).filter(w => w.length > 0);
+        const groups = expandTerms(searchTerm);
         const request = pool.request();
-        const conditions = words.map((word, i) => {
-            request.input(`term${i}`, sql.VarChar, `%${word}%`);
-            return `[DESCRIP] LIKE @term${i} COLLATE Latin1_General_CI_AI`;
+        let paramIndex = 0;
+        const conditions = groups.map(group => {
+            const orClauses = group.map(word => {
+                request.input(`term${paramIndex}`, sql.VarChar, `%${word}%`);
+                paramIndex++;
+                return `[DESCRIP] LIKE @term${paramIndex - 1} COLLATE Latin1_General_CI_AI`;
+            });
+            return '(' + orClauses.join(' OR ') + ')';
         });
         const result = await request.query(`
             SELECT [ARTICULO], [DESCRIP], [PRECIO1], [PRECIO2], [PRECIO3], [PRECIO4], [PRECIO5], [PRECIO6], [PRECIO7], [PRECIO8], [PRECIO9], [PRECIO10], [IMPUESTO], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10]
