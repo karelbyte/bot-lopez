@@ -222,8 +222,8 @@ async function executeProductSearch(textMessage, session, responses) {
             termBuckets.push(results);
         }
 
-        // Intercalar: primero perTermLimit de cada término (primera página balanceada),
-        // luego el resto de cada término en orden
+        // Intercalar todas las páginas de forma balanceada:
+        // cada vuelta toma perTermLimit de cada término hasta agotar todos.
         const seen = new Set();
         const addResult = (r) => {
             if (!seen.has(r.ARTICULO)) {
@@ -232,13 +232,18 @@ async function executeProductSearch(textMessage, session, responses) {
             }
         };
 
-        // Primera pasada: cuota inicial de cada término
-        for (const bucket of termBuckets) {
-            bucket.slice(0, perTermLimit).forEach(addResult);
-        }
-        // Segunda pasada: el resto de cada término
-        for (const bucket of termBuckets) {
-            bucket.slice(perTermLimit).forEach(addResult);
+        let offset = 0;
+        let hasMore = true;
+        while (hasMore) {
+            hasMore = false;
+            for (const bucket of termBuckets) {
+                const slice = bucket.slice(offset, offset + perTermLimit);
+                if (slice.length > 0) {
+                    hasMore = true;
+                    slice.forEach(addResult);
+                }
+            }
+            offset += perTermLimit;
         }
     } else {
         // Búsqueda simple — un solo término ya limpio
