@@ -181,16 +181,21 @@ async function formatQuoteSummary(identifier, simulatedQuote = null) {
  */
 async function executeProductSearch(textMessage, session, responses) {
     const reply = (text) => responses.push({ type: 'text', text });
-    const cleanedMessage = cleanSearchQuery(textMessage)
 
-    // Detectar si el cliente envió una lista separada por comas
-    const terms = cleanedMessage.split(',')
+    // 1. Dividir primero por comas o " y " para obtener segmentos crudos
+    const rawSegments = textMessage
+        .split(/,|\sy\s/i)
         .map(t => t.trim())
-        .filter(t => t.length >= 3);
+        .filter(t => t.length > 0);
+
+    // 2. Limpiar cada segmento individualmente (quitar "quiero", "un", "necesito", etc.)
+    const terms = rawSegments
+        .map(seg => cleanSearchQuery(seg))
+        .filter(t => t.length >= 2);
 
     let allResults = [];
     if (terms.length > 1) {
-        // Búsqueda múltiple — combinamos todos los resultados deduplicando por código
+        // Búsqueda múltiple — una búsqueda por término, deduplicando por código de artículo
         const seen = new Set();
         for (const term of terms) {
             const results = await searchProducts(term);
@@ -202,13 +207,13 @@ async function executeProductSearch(textMessage, session, responses) {
             }
         }
     } else {
-        // Búsqueda simple — flujo normal
-        const searchTerm = terms[0] || cleanedMessage;
+        // Búsqueda simple — un solo término ya limpio
+        const searchTerm = terms[0] || cleanSearchQuery(textMessage);
         allResults = await searchProducts(searchTerm);
     }
 
     if (allResults.length === 0) {
-        const queryText = terms.length > 1 ? terms.join(', ') : (terms[0] || cleanedMessage);
+        const queryText = terms.length > 1 ? terms.join(', ') : (terms[0] || textMessage);
         reply(`No encontré ningún artículo que coincida con "${queryText}".\n\nVerifica que esté bien escrito o intenta con una palabra más general.`);
         return;
     }
