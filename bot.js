@@ -211,23 +211,34 @@ async function executeProductSearch(textMessage, session, responses) {
 
     let allResults = [];
     if (terms.length > 1) {
-        // Búsqueda múltiple — cada término aporta como máximo su cuota de PAGE_SIZE
-        // para que todos los términos tengan representación visible en la primera página.
-        // Fórmula: Math.max(2, Math.floor(PAGE_SIZE / terms.length))
-        // Ejemplos: 2 términos→5c/u, 3→3, 4→2, 5+→2
+        // Búsqueda múltiple — recopilamos TODOS los resultados de cada término,
+        // luego los intercalamos por cuota para que la primera página (PAGE_SIZE)
+        // muestre resultados balanceados de todos los términos.
+        // La paginación sigue funcionando igual sobre allResults completo.
         const perTermLimit = Math.max(2, Math.floor(PAGE_SIZE / terms.length));
-        const seen = new Set();
+        const termBuckets = [];
         for (const term of terms) {
             const results = await searchWithFallback(term);
-            let added = 0;
-            for (const r of results) {
-                if (added >= perTermLimit) break;
-                if (!seen.has(r.ARTICULO)) {
-                    seen.add(r.ARTICULO);
-                    allResults.push(r);
-                    added++;
-                }
+            termBuckets.push(results);
+        }
+
+        // Intercalar: primero perTermLimit de cada término (primera página balanceada),
+        // luego el resto de cada término en orden
+        const seen = new Set();
+        const addResult = (r) => {
+            if (!seen.has(r.ARTICULO)) {
+                seen.add(r.ARTICULO);
+                allResults.push(r);
             }
+        };
+
+        // Primera pasada: cuota inicial de cada término
+        for (const bucket of termBuckets) {
+            bucket.slice(0, perTermLimit).forEach(addResult);
+        }
+        // Segunda pasada: el resto de cada término
+        for (const bucket of termBuckets) {
+            bucket.slice(perTermLimit).forEach(addResult);
         }
     } else {
         // Búsqueda simple — un solo término ya limpio
