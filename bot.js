@@ -193,23 +193,46 @@ async function executeProductSearch(textMessage, session, responses) {
         .map(seg => cleanSearchQuery(seg))
         .filter(t => t.length >= 2);
 
+    /**
+     * Busca un término. Si no hay resultados y el término tiene más de una palabra,
+     * reintenta con solo la primera palabra (fallback) para cubrir casos como
+     * "libreta roja" donde el adjetivo no está en la DB.
+     */
+    async function searchWithFallback(term) {
+        let results = await searchProducts(term);
+        if (results.length === 0) {
+            const firstWord = term.trim().split(/\s+/)[0];
+            if (firstWord && firstWord !== term.trim()) {
+                results = await searchProducts(firstWord);
+            }
+        }
+        return results;
+    }
+
     let allResults = [];
     if (terms.length > 1) {
-        // Búsqueda múltiple — una búsqueda por término, deduplicando por código de artículo
+        // Búsqueda múltiple — cada término aporta como máximo su cuota de PAGE_SIZE
+        // para que todos los términos tengan representación visible en la primera página.
+        // Fórmula: Math.max(2, Math.floor(PAGE_SIZE / terms.length))
+        // Ejemplos: 2 términos→5c/u, 3→3, 4→2, 5+→2
+        const perTermLimit = Math.max(2, Math.floor(PAGE_SIZE / terms.length));
         const seen = new Set();
         for (const term of terms) {
-            const results = await searchProducts(term);
+            const results = await searchWithFallback(term);
+            let added = 0;
             for (const r of results) {
+                if (added >= perTermLimit) break;
                 if (!seen.has(r.ARTICULO)) {
                     seen.add(r.ARTICULO);
                     allResults.push(r);
+                    added++;
                 }
             }
         }
     } else {
         // Búsqueda simple — un solo término ya limpio
         const searchTerm = terms[0] || cleanSearchQuery(textMessage);
-        allResults = await searchProducts(searchTerm);
+        allResults = await searchWithFallback(searchTerm);
     }
 
     if (allResults.length === 0) {
