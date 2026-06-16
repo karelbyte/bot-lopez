@@ -69,7 +69,7 @@ const parasiteWords = [
     'aquel', 'aquella', 'aquellos', 'aquellas',
     'mi', 'tu', 'su', 'mis', 'tus', 'sus',
     'es', 'son', 'era', 'sera', 'seria',
-    'tengo', 'tienes', 'tenemos',
+    'tengo', 'tienes', 'tenemos', 'tendrá', 'tendras', 'tendrían', 'tendrian', 'tendría', 'tendria',
     'dame', 'pasame', 'muestrame', 'enseñame',
     'ver', 'mira', 'mire', 'buscar', 'busquemos',
     'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches',
@@ -85,23 +85,39 @@ const parasiteWords = [
     'gustaria', 'gusta'
 ]
 
+function removeAccents(text) {
+    return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
 function cleanSearchQuery(text) {
     let cleaned = text.trim()
     const lower = cleaned.toLowerCase()
+    const noAccents = removeAccents(lower)
+    
+    // Eliminar prefijos parásitos (incluye versiones con y sin tilde)
     for (const prefix of parasitePrefixes) {
-        const regex = new RegExp('(?:^|[\\s,.;:!?]+)' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s.,;:!?\\-]*', 'i')
-        cleaned = cleaned.replace(regex, ' ')
+        const prefixNoAccents = removeAccents(prefix)
+        // Probar tanto con tilde como sin tilde
+        const regex1 = new RegExp('(?:^|[\\s,.;:!?]+)' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s.,;:!?\\-]*', 'i')
+        const regex2 = new RegExp('(?:^|[\\s,.;:!?]+)' + prefixNoAccents.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s.,;:!?\\-]*', 'i')
+        cleaned = cleaned.replace(regex1, ' ').replace(regex2, ' ')
     }
+    
     cleaned = cleaned.replace(/[.,;:!?\-_]+/g, ' ')
     cleaned = cleaned.replace(/\s+/g, ' ')
     cleaned = cleaned.trim()
+    
     const words = cleaned.split(/\s+/).filter(w => w.length > 0)
     const significant = words.filter(w => {
         const lowerW = w.toLowerCase()
+        const lowerWNoAccents = removeAccents(lowerW)
+        // Verificar tanto con tilde como sin tilde
         if (parasiteWords.includes(lowerW)) return false
+        if (parasiteWords.includes(lowerWNoAccents)) return false
         if (lowerW.length < 2) return false
         return true
     })
+    
     cleaned = significant.join(' ')
     return cleaned || text.trim()
 }

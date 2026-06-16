@@ -399,9 +399,12 @@ async function processMessage(identifier, textMessage, dryRun = false) {
             if (session.state !== 'ASKING_NAME') {
                 session.state = 'ASKING_NAME';
                 await handlePromotions('WELCOME');
-                const welcomeText = `¡Hola! Bienvenido a *Lopez Impresores*.\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx\n\nPara comenzar y proporcionarte un mejor servicio, ¿me podrías decir tu nombre y apellido?`;
+                
+                // 1. Saludo inicial con logo, teléfonos y correo
+                const welcomeText = `¡Hola! Bienvenido a *Lopez Impresores*.\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx`;
                 replyWithLogo(welcomeText);
 
+                // 2. Manual de uso (si existe)
                 const activeManual = await getActiveManual();
                 if (activeManual) {
                     responses.push({
@@ -412,13 +415,16 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                     });
                 }
 
+                // 3. Pregunta del nombre y apellido
+                reply(`Para comenzar y proporcionarte un mejor servicio, *¿me podrías decir tu nombre y apellido?*`);
+
                 return responses;
             } else {
                 // Si el bot está pidiendo el nombre y el usuario envía un saludo genérico,
                 // le recordamos que necesitamos su nombre y no cambiamos el estado.
                 const genericPhrases = ['hola', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'saludos', 'ok', 'gracias', 'gracias!'];
                 if (genericPhrases.includes(textLower)) {
-                    reply(`¡Hola! Necesito tu nombre y apellido para poder registrarte y ofrecerte un mejor servicio. Por favor, escríbelos.`);
+                    reply(`¡Hola! *Necesito tu nombre y apellido* para poder registrarte y ofrecerte un mejor servicio. Por favor, escríbelos.`);
                     return responses;
                 }
 
@@ -430,7 +436,7 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                 }
                 session.state = 'IDLE';
                 await handlePromotions('POST_NAME');
-                reply(`¡Gracias, ${textMessage}! Ya te hemos registrado.\n\n¿Qué artículo deseas buscar o cotizar? Escribe el nombre o parte del nombre.`);
+                reply(`¡Gracias, *${textMessage}*! Ya te hemos registrado.\n\n¿Qué artículo deseas buscar o cotizar? Escribe el nombre o parte del nombre.`);
                 return responses;
             }
         }
@@ -572,7 +578,7 @@ async function processMessage(identifier, textMessage, dryRun = false) {
 
                 const pdfPath = await generateQuotePdf(user, pending, pedidoId);
 
-                let orderMsg = `¡Listo, ${user.name}! Aquí tienes tu cotización en PDF.\n\n¡Gracias por cotizar con nosotros!`;
+                let orderMsg = `¡Listo, ${user.name}! Aquí tienes tu cotización en PDF.\n\n¡Gracias por cotizar con nosotros!\n\n👉 Si quieres apartar tu pedido, reenvía este PDF al teléfono: *+52 1 755 144 7879`;
                 if (pedidoId) {
                     orderMsg += `\n\n✅ Cotización registrada en nuestro sistema con el número: *${pedidoId}*`;
                 }
@@ -604,7 +610,7 @@ async function processMessage(identifier, textMessage, dryRun = false) {
             session.selectedItem = null;
             session.selectionQueue = [];
             await handlePromotions('WELCOME');
-            replyWithLogo(`Hasta luego ${user.name} 👋\n\nGracias por contactar a *Lopez Impresores*.\nRecuerda que estamos en:\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx\n\nEstamos pendientes para asesorarte con otra cotización o información. ¡Que tengas un excelente día! 😊`);
+            replyWithLogo(`Hasta luego *${user.name}* 👋\n\nGracias por contactar a *Lopez Impresores*.\nRecuerda que estamos en:\n🌐 https://lopezimpresores.mx/\n📞 (755) 554-2478 y 554-2578\n✉️ ventas@lopezimpresores.mx\n\nEstamos pendientes para asesorarte con otra cotización o información. ¡Que tengas un excelente día! 😊`);
             return responses;
         }
 
@@ -619,15 +625,6 @@ async function processMessage(identifier, textMessage, dryRun = false) {
 
             await handlePromotions('WELCOME');
 
-            const returnWelcomeText = `¡Hola de nuevo, ${user.name}! 👋 Bienvenido a *Lopez Impresores*.
-🌐 https://lopezimpresores.mx/
-📞 (755) 554-2478 y 554-2578
-✉️ ventas@lopezimpresores.mx
-
-👉 Escribe el nombre o clave de un artículo para buscarlo en nuestro inventario.
-_(Ejemplo: "libreta", "lapiz", "cartulina")_`;
-            replyWithLogo(returnWelcomeText);
-
             const activeManual = await getActiveManual();
             if (activeManual) {
                 responses.push({
@@ -637,6 +634,15 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     fileName: activeManual.filename
                 });
             }
+
+            const returnWelcomeText = ` Bienvenido a *Lopez Impresores*.
+🌐 https://lopezimpresores.mx/
+📞 (755) 554-2478 y 554-2578
+✉️ ventas@lopezimpresores.mx
+¡Hola de nuevo, *${user.name}*! 👋
+👉 Escribe el nombre o clave de un artículo para buscarlo en nuestro inventario.
+_(Ejemplo: "libreta", "lapiz", "cartulina")_`;
+            replyWithLogo(returnWelcomeText);
 
             return responses;
         }
