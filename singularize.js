@@ -1,14 +1,19 @@
+function removeAccents(text) {
+    return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
 function singularize(word) {
     const lower = word.toLowerCase().trim()
-    if (lower.length < 3) return lower
+    const lowerNoAccents = removeAccents(lower)
+    if (lowerNoAccents.length < 3) return lower
     const invariables = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo', 'paraguas', 'sacapuntas', 'cumpleanos', 'virus', 'caos', 'torax']
-    if (invariables.includes(lower)) return lower
-    if (lower.endsWith('ces')) return lower.slice(0, -3) + 'z'
-    if (lower.endsWith('es')) {
+    if (invariables.includes(lowerNoAccents)) return lower
+    if (lowerNoAccents.endsWith('ces')) return lower.slice(0, -3) + 'z'
+    if (lowerNoAccents.endsWith('es')) {
         const sinEs = lower.slice(0, -2)
         if (sinEs.length >= 2) return sinEs
     }
-    if (lower.endsWith('s')) {
+    if (lowerNoAccents.endsWith('s')) {
         const sinS = lower.slice(0, -1)
         if (sinS.length >= 2) return sinS
     }
@@ -85,14 +90,10 @@ const parasiteWords = [
     'gustaria', 'gusta'
 ]
 
-function removeAccents(text) {
-    return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-}
+const parasiteWordsNoAccents = parasiteWords.map(w => removeAccents(w.toLowerCase()))
 
 function cleanSearchQuery(text) {
     let cleaned = text.trim()
-    const lower = cleaned.toLowerCase()
-    const noAccents = removeAccents(lower)
     
     // Eliminar prefijos parásitos (incluye versiones con y sin tilde)
     for (const prefix of parasitePrefixes) {
@@ -111,9 +112,7 @@ function cleanSearchQuery(text) {
     const significant = words.filter(w => {
         const lowerW = w.toLowerCase()
         const lowerWNoAccents = removeAccents(lowerW)
-        // Verificar tanto con tilde como sin tilde
-        if (parasiteWords.includes(lowerW)) return false
-        if (parasiteWords.includes(lowerWNoAccents)) return false
+        if (parasiteWordsNoAccents.includes(lowerWNoAccents)) return false
         if (lowerW.length < 2) return false
         return true
     })
@@ -123,4 +122,3 @@ function cleanSearchQuery(text) {
 }
 
 module.exports = { singularize, expandTerms, cleanSearchQuery }
-
