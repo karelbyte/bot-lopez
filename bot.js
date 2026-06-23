@@ -630,7 +630,7 @@ async function processMessage(identifier, textMessage, dryRun = false) {
                 responses.push({
                     type: 'pdf',
                     pdfPath: path.join(__dirname, activeManual.filepath),
-                    text: 'Manual de uso',
+                    text: '*¡Por favor, antes de iniciar, le pedimos que lea el manual de uso!*',
                     fileName: activeManual.filename
                 });
             }
