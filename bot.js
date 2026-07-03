@@ -750,7 +750,7 @@ _(Ejemplo: "libreta", "lapiz", "cartulina")_`;
                     reply(`✅ Se agregaron tus artículos seleccionados a la cotización.\n\n${summary}`);
                 }
             } else {
-                reply(`❌ Cantidad inválida. Si deseas agregar *${session.selectedItem.DESCRIP}*, por favor, escribe un número mayor a 0.\n\nSi quieres buscar otro artículo, simplemente escríbelo.`);
+                reply(`❌ Cantidad inválida. Por favor, escribe un número mayor a 0 para agregar *${session.selectedItem.DESCRIP}*.`);
             }
         }
 
